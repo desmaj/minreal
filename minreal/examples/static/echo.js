@@ -6,12 +6,7 @@ var EchoStore = function (baseURL, app) {
     this._csp.onread = this.onMessage.bind(this);
 };
 EchoStore.prototype.onMessage = function (message) {
-    console.log("onMessage: " + message);
-    console.log("Tacos");
-    console.log("***" + this._messages);
-    console.log("Tacos");
     this._messages.push(message);
-    console.log("***" + this._messages.toString());
     this._app.setState({messages: this._messages});
 };
 EchoStore.prototype.sendMessage = function (message) {
@@ -56,7 +51,6 @@ var EchoApp = React.createClass({
     },
     
     render: function () {
-	console.log(this.state);
 	return (
 		<div id="echo-app">
 		<EchoControls store={this.store} />
