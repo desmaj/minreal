@@ -1,7 +1,7 @@
 # minreal
-A Python comet server build on CSP (Comet Session Protocol)
-(with a provided socket proxy)
+A Python comet server build on CSP (Comet Session Protocol) and providing a TCP socket proxy.
 
+## Running the examples
 The standalone server can be run like:
 ```bash
 $ mrl <mount path>:<client plugin module dotted name>:<client plugin class>
@@ -15,3 +15,6 @@ $ mrl echo:minreal.examples.echo:EchoClient
 # For the TCPSocket IRC example
 $ mrl tcp:minreal.examples.tcp:TCPClient
 ```
+
+## Developing a plugin
+Take a look at the [annotated example](https://github.com/desmaj/minreal/blob/master/minreal/minreal/examples/echo.py) to get started.
