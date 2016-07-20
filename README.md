@@ -1,6 +1,11 @@
 # minreal
 A Python comet server build on CSP (Comet Session Protocol) and providing a TCP socket proxy.
 
+Disclaimer: Gosh this is a new project. Don't use it for anything yet.
+
+Disclaimer disclaimer: None of the technology s particularly new, but I have ideas for where
+this might go that might be interesting.
+
 ## Running the examples
 The standalone server can be run like:
 ```bash
