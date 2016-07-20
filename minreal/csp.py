@@ -1,7 +1,9 @@
+import base64
 import copy
 import json
 import os
 import time
+import urllib
 import uuid
 
 import eventlet
@@ -63,6 +65,7 @@ class CSPResponseFactory(object):
         yield prebuffer + preamble
 
         for batch in packets:
+            print repr(batch)
             response_vars = {
                 'data': json.dumps(batch),
                 'prebuffer': ' ' * session_vars['ps'],
@@ -77,7 +80,6 @@ class CSPSession(object):
 
     @staticmethod
     def parse_request_vars(request):
-        print request
         parsed_request_vars = {}
         parsed_request_vars['s'] = request.get('s')
         parsed_request_vars['a'] = int(request.get('a', '-1'))
@@ -129,14 +131,18 @@ class CSPSession(object):
         self._vars.update(new_session_vars)
 
     def add_chunk(self, chunk):
-        self._packet_buffer.append([self._next_packet_id, 0, chunk])
+        self._packet_buffer.append(
+            [self._next_packet_id, 1, base64.b64encode(chunk)]
+        )
         self._next_packet_id += 1
         self._packet_queue.put(True)
 
     def _ack_packets(self, ack_id):
-        for i, packet in enumerate(copy.copy(self._packet_buffer)):
-            if packet[PACKET_ID] <= ack_id:
-                self._packet_buffer.pop(i)
+        buffer_copy = copy.copy(self._packet_buffer)
+        self._packet_buffer = []
+        for packet in buffer_copy:
+            if packet[PACKET_ID] > ack_id:
+                self._packet_buffer.append(packet)
 
     def _batch_packets(self):
         return [packet for packet in self._packet_buffer]
@@ -144,7 +150,10 @@ class CSPSession(object):
     def send(self, request_vars, session_vars):
         self._ack_packets(request_vars['a'])
         for packet in request_vars['d']:
-            self._client.handle_data(packet[PACKET_DATA])
+            data = packet[PACKET_DATA]
+            if packet[PACKET_ENCODING] == PACKET_ENCODING_BASE64:
+                data = base64.b64decode(data)
+            self._client.handle_data(data)
         return "OK"
 
     def comet(self, request_vars, session_vars):
@@ -162,7 +171,8 @@ class CSPSession(object):
             start = time.time()
             waited = 0.0
             try:
-                while self._packet_queue.get(timeout=session_vars['du']-waited):
+                timeout = session_vars['du']
+                while self._packet_queue.get(timeout=timeout-waited):
                     yield self._batch_packets()
                     waited += time.time() - start
             except queue.Empty:
@@ -217,11 +227,10 @@ class CSPApp(object):
     def comet(self, environ, start_response):
         request = webob.Request(environ).params
         request_vars = CSPSession.parse_request_vars(request)
-        print request_vars
         session_vars = CSPSession.parse_session_vars(request)
         session = self._sessions.get(request_vars['s'])
         packets = session.comet(request_vars, session_vars)
-        
+
         response = self._response_factory.render_comet_response(
             session.session_vars, packets
         )
