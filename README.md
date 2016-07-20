@@ -17,4 +17,4 @@ $ mrl tcp:minreal.examples.tcp:TCPClient
 ```
 
 ## Developing a plugin
-Take a look at the [annotated example](https://github.com/desmaj/minreal/blob/minreal/minreal/examples/echo.py) to get started.
+Take a look at the [annotated example](https://github.com/desmaj/minreal/blob/minreal/examples/echo.py) to get started.
