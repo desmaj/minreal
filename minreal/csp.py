@@ -65,7 +65,6 @@ class CSPResponseFactory(object):
         yield prebuffer + preamble
 
         for batch in packets:
-            print repr(batch)
             response_vars = {
                 'data': json.dumps(batch),
                 'prebuffer': ' ' * session_vars['ps'],
