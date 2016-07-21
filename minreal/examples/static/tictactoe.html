@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+    <head>
+	<title>Minreal TicTacToe Example</title>
+	<style>
+	 body {
+	     width: 640px;
+	     margin-left: auto;
+	     margin-right: auto;
+	 }
+	 #tictactoe-app-container {
+	     width: 600px;
+	     margin-left: auto;
+	     margin-right: auto;
+	 }
+	 #game-board {
+	     float: left;
+	 }
+	 #status-message {
+	     float: left;
+	 }
+	 #status-message-contents {
+	     vertical-align: middle;
+	 }
+	 .board-cell {
+	     border: solid black 1px;
+	     width: 10px;
+	     height: 10px;
+	     text-align: center;
+	 }
+	</style>
+    </head>
+    <body>
+	<div id="tictactoe-app-container"></div>
+	<script type="text/javascript" src="static/jquery-3.0.0.min.js"></script>
+	<script type="text/javascript" src="/static/csp.js"></script>
+	<script type="text/javascript" src="static/react-with-addons.js"></script>
+	<script type="text/javascript" src="static/react-dom.js"></script>
+	<script type="text/javascript" src="static/browser.min.js"></script>
+	<script type="text/babel" src="static/tictactoe.js"></script>
+    </body>
+</html>
