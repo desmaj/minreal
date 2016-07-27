@@ -14,8 +14,9 @@ from webob.exc import HTTPNotFound
 from minreal.client import MinrealClient
 from minreal.csp import CSPApp
 
+
 class TCPClient(MinrealClient):
-    
+
     @classmethod
     def app(cls):
         map = urlmap.URLMap(HTTPNotFound)
