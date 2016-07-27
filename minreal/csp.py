@@ -3,7 +3,6 @@ import copy
 import json
 import os
 import time
-import urllib
 import uuid
 
 import eventlet
@@ -13,6 +12,7 @@ from paste import fileapp
 from paste import urlmap
 
 import webob
+from webob.exc import HTTPBadRequest
 from webob.exc import HTTPNotFound
 
 PACKET_ID = 0
@@ -216,23 +216,30 @@ class CSPApp(object):
         request_vars = CSPSession.parse_request_vars(request)
         session_vars = CSPSession.parse_session_vars(request)
         session = self._sessions.get(request_vars['s'])
-        message = session.send(request_vars, session_vars)
-        headers, response = self._response_factory.render_send_response(
-            session.session_vars, message
-        )
-        return webob.Response(headers=headers, app_iter=response)(
-            environ, start_response)
+        if session:
+            message = session.send(request_vars, session_vars)
+            headers, response = self._response_factory.render_send_response(
+                session.session_vars, message
+            )
+            return webob.Response(headers=headers, app_iter=response)(
+                environ, start_response
+            )
+        else:
+            return HTTPBadRequest()
 
     def comet(self, environ, start_response):
         request = webob.Request(environ).params
         request_vars = CSPSession.parse_request_vars(request)
         session_vars = CSPSession.parse_session_vars(request)
         session = self._sessions.get(request_vars['s'])
-        packets = session.comet(request_vars, session_vars)
+        if session:
+            packets = session.comet(request_vars, session_vars)
 
-        response = self._response_factory.render_comet_response(
-            session.session_vars, packets
-        )
-        headers = response.next()
-        return webob.Response(headers=headers, app_iter=response)(
-            environ, start_response)
+            response = self._response_factory.render_comet_response(
+                session.session_vars, packets
+            )
+            headers = response.next()
+            return webob.Response(headers=headers, app_iter=response)(
+                environ, start_response)
+        else:
+            return HTTPBadRequest()
