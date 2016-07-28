@@ -221,11 +221,10 @@ class CSPApp(object):
             headers, response = self._response_factory.render_send_response(
                 session.session_vars, message
             )
-            return webob.Response(headers=headers, app_iter=response)(
-                environ, start_response
-            )
+            response = webob.Response(headers=headers, app_iter=response)
         else:
-            return HTTPBadRequest()
+            response = HTTPBadRequest()
+        return response(environ, start_response)
 
     def comet(self, environ, start_response):
         request = webob.Request(environ).params
@@ -239,7 +238,7 @@ class CSPApp(object):
                 session.session_vars, packets
             )
             headers = response.next()
-            return webob.Response(headers=headers, app_iter=response)(
-                environ, start_response)
+            response = webob.Response(headers=headers, app_iter=response)
         else:
-            return HTTPBadRequest()
+            response = HTTPBadRequest()
+        return response(environ, start_response)
