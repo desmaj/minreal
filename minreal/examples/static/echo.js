@@ -1,8 +1,8 @@
-var EchoStore = function (baseURL, app) {
+var EchoStore = function (host, port, path, app) {
     this._messages = [];
     this._app = app;
-    this._csp = new csp.CometSession();
-    this._csp.connect(baseURL);
+    this._csp = new CSPSession('localhost', 5001, 'echo/csp');
+    this._csp.open();
     this._csp.onread = this.onMessage.bind(this);
 };
 EchoStore.prototype.onMessage = function (message) {
@@ -30,8 +30,9 @@ var EchoControls = React.createClass({
 
 var EchoConsole = React.createClass({
     render: function () {
+	var i=0;
 	var messageEntries = this.props.messages.map(function (message) {
-	    return <div className="echo-entry">{message}</div>;
+	    return <div key={i++} className="echo-entry">{message}</div>;
 	});
 	return (
 		<div id="echo-console" style={{border: 'solid black 1px'}} >

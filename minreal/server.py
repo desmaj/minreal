@@ -11,4 +11,4 @@ class MinrealServer(object):
 
     def run(self, host='0.0.0.0', port=5001):
         app = MinrealApp(self._clients)
-        wsgi.server(eventlet.listen((host, port)), app)
+        wsgi.server(eventlet.listen((host, port)), app, minimum_chunk_size=1)

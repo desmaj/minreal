@@ -26,11 +26,11 @@ PACKET_ENCODING_BASE64 = 1
 class CSPResponseFactory(object):
     SEND_RESPONSE_FORMAT = (
         '{prebuffer}{preamble}'
-        '{request_prefix}({data}){request_suffix}'
+        '{request_prefix}{data}{request_suffix}'
     )
     COMET_RESPONSE_FORMAT = (
         '{prebuffer}{preamble}'
-        '{batch_prefix}({data}){batch_suffix}'
+        '{batch_prefix}{data}{batch_suffix}'
     )
 
     def render_handshake_response(self, session_vars, session_id):
@@ -143,8 +143,18 @@ class CSPSession(object):
             if packet[PACKET_ID] > ack_id:
                 self._packet_buffer.append(packet)
 
-    def _batch_packets(self):
-        return [packet for packet in self._packet_buffer]
+    def _batch_packets(self, after=None):
+        if after:
+            batch = [packet for packet in self._packet_buffer
+                     if packet[PACKET_ID] > after]
+        else:
+            batch = [packet for packet in self._packet_buffer]
+
+        if batch:
+            last_packet_id = batch[-1][PACKET_ID]
+        else:
+            last_packet_id = None
+        return batch, last_packet_id
 
     def send(self, request_vars, session_vars):
         self._ack_packets(request_vars['a'])
@@ -159,24 +169,28 @@ class CSPSession(object):
         self._ack_packets(request_vars['a'])
         if not session_vars['is']:
             if self._packet_buffer:
-                yield self._batch_packets()
+                batch, _ = self._batch_packets()
+                yield batch
             else:
                 try:
                     self._packet_queue.get(timeout=session_vars['du'])
                 except queue.Empty:
                     pass
-                yield self._batch_packets()
+                batch, _ = self._batch_packets()
+                yield batch
         else:
             start = time.time()
             waited = 0.0
+            timeout = session_vars['du']
+            last_packet = None
             try:
-                timeout = session_vars['du']
                 while self._packet_queue.get(timeout=timeout-waited):
-                    yield self._batch_packets()
+                    batch, last_packet = self._batch_packets(last_packet)
+                    if batch:
+                        yield batch
                     waited += time.time() - start
             except queue.Empty:
                 pass
-            yield self._batch_packets()
 
 
 class CSPApp(object):

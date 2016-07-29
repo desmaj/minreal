@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+    <head>
+	<title>Minreal HalveLife Example</title>
+	<style>
+	 body {
+	     width: 800px;
+	     margin-left: auto;
+	     margin-right: auto;
+	 }
+	 #halvelife-app-container {
+	     width: 720px;
+	     margin-left: auto;
+	     margin-right: auto;
+	 }
+	 #halvelife-console {
+	     border: solid black 1px;
+	     overflow: auto;
+	     height: 60px;
+	     padding-top: 5px;
+	     margin-bottom: 10px;
+	     background-color: #f0e0f0;
+	     font-size: 12px;
+	 }
+	 .halvelife-console-message {
+	     border-bottom: dashed gray 1px;
+	     padding-left: 10px;
+	 }
+	 #halvelife-controls {
+	     margin-bottom: 10px;
+	 }
+	 #halvelife-board {
+	     border: solid black 1px;
+	     height: 640px;
+	     background-color: #e0e0e0;
+	 }
+	</style>
+    </head>
+    <body>
+	<div id="halvelife-app-container"></div>
+	<script type="text/javascript" src="static/jquery-3.0.0.min.js"></script>
+	<script type="text/javascript" src="static/msgpack.min.js"></script>
+	<script type="text/javascript" src="/static/csp.js"></script>
+	<script type="text/javascript" src="static/react-with-addons.js"></script>
+	<script type="text/javascript" src="static/react-dom.js"></script>
+	<script type="text/javascript" src="static/browser.min.js"></script>
+	<script type="text/babel" src="static/halvelife.js"></script>
+    </body>
+</html>

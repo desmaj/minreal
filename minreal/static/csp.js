@@ -1,474 +1,621 @@
-;(function() {
-if (!window.console) {
-    window.console = {
-        log: function() { }
-    }
-}
-var id = 0;
-csp = {
-    'readyState': {
-        'initial': 0,
-        'opening': 1,
-        'open':    2,
-        'closing': 3,
-        'closed':  4
-    }
-};
-csp.util = {};
-
-// Add useful url parsing library to socket.util
-(function() {
-// parseUri 1.2.2
-// (c) Steven Levithan <stevenlevithan.com>
-// MIT License
-function parseUri (str) {
-    var o   = parseUri.options,
-        m   = o.parser[o.strictMode ? "strict" : "loose"].exec(str),
-        uri = {},
-        i   = 14;
-    while (i--) uri[o.key[i]] = m[i] || "";
-    uri[o.q.name] = {};
-    uri[o.key[12]].replace(o.q.parser, function ($0, $1, $2) {
-        if ($1) uri[o.q.name][$1] = $2;
-    });
-    return uri;
-};
-parseUri.options = {
-    strictMode: false,
-    key: ["source","protocol","authority","userInfo","user","password","host","port","relative","path","directory","file","query","anchor"],
-    q:   {
-        name:   "queryKey",
-        parser: /(?:^|&)([^&=]*)=?([^&]*)/g
-    },
-    parser: {
-        strict: /^(?:([^:\/?#]+):)?(?:\/\/((?:(([^:@]*)(?::([^:@]*))?)?@)?([^:\/?#]*)(?::(\d*))?))?((((?:[^?#\/]*\/)*)([^?#]*))(?:\?([^#]*))?(?:#(.*))?)/,
-        loose:  /^(?:(?![^:@]+:[^:@\/]*@)([^:\/?#.]+):)?(?:\/\/)?((?:(([^:@]*)(?::([^:@]*))?)?@)?([^:\/?#]*)(?::(\d*))?)(((\/(?:[^?#](?![^?#\/]*\.[^?#\/.]+(?:[?#]|$)))*\/?)?([^?#\/]*))(?:\?([^#]*))?(?:#(.*))?)/
-    }
-};
-csp.util.parseUri = parseUri;
-})();
-
-csp.util.isSameDomain = function(urlA, urlB) {
-    var a = csp.util.parseUri(urlA);
-    var b = csp.util.parseUri(urlB);
-    return ((urlA.port == urlB.port ) && (urlA.host == urlB.host) && (urlA.protocol = urlB.protocol))
-}
-
-csp.util.chooseTransport = function(url, options) {
-    var fileMatch = location.toString().match('file://');
-    if (fileMatch && fileMatch.index === 0) {
-      return transports.jsonp // XXX      
-    }
-    if (csp.util.isSameDomain(url, location.toString())) {
-        return transports.xhr;
-    }
-    try {
-        if (window.XMLHttpRequest && (new XMLHttpRequest()).withCredentials !== undefined) {
-            return transports.xhr;
-        }
-    } catch(e) { }
-    return transports.jsonp
-}
-
-
-var PARAMS = {
-    'xhrstream':   {"is": "1", "bs": "\n"},
-    'xhrpoll':     {"du": "0"},
-    'xhrlongpoll': {},
-    'sselongpoll': {"bp": "data: ", "bs": "\r\n", "se": "1"},
-    'ssestream':   {"bp": "data: ", "bs": "\r\n", "se": "1", "is": "1"}
+var createXHR = function () {
+    return new XMLHttpRequest()
 };
 
-csp.CometSession = function() {
-    var self = this;
-    self.id = ++id;
-    self.url = null;
-    self.readyState = csp.readyState.initial;
-    self.sessionKey = null;
-    var transport = null;
-    self.write = function() { throw new Error("invalid readyState"); }
-    self.onopen = function() {
-//        console.log('onopen', self.sessionKey);
-    }
-
-    self.onclose = function(code) {
-//        console.log('onclose', code);
-    }
-
-    self.onread = function(data) {
-//        console.log('onread', data);
-    }
-    self.connect = function(url, options) {
-        options = options || {};
-        var timeout = options.timeout || 10000;
-        self.readyState = csp.readyState.opening;
-        self.url = url;
-        transport = new (csp.util.chooseTransport(url, options))(self.id, url, options);
-        var handshakeTimer = window.setTimeout(self.close, timeout);
-        transport.onHandshake = function(data) {
-            self.readyState = csp.readyState.open;
-            self.sessionKey = data.session;
-            self.write = transport.send;
-            transport.onPacket = self.onread;
-            transport.resume(self.sessionKey, 0, 0);
-            clearTimeout(handshakeTimer);
-            self.onopen();
-        }
-        transport.handshake();
-    }
-    self.close = function() {
-        transport.close();
-        self.readyState = csp.readyState.closed;
-        self.onclose();
-    }
-}
-
-var Transport = function(cspId, url) {
-    var self = this;
-    self.opened = false;
-    self.cspId = cspId;
-    self.url = url;
-    self.buffer = "";
-    self.packetsInFlight = null;
-    self.sending = false;
-    self.sessionKey = null;
-    self.lastEventId = null;
-    
-    this.handshake = function() {
-        self.opened = true;
-    }
-    self.processPackets = function(packets) {
-        for (var i = 0; i < packets.length; i++) {
-            var p = packets[i];
-            if (p === null)
-                return self.doClose();
-            var ackId = p[0];
-            var encoding = p[1];
-            var data = p[2];
-            if (self.lastEventId != null && ackId <= self.lastEventId)
-                continue;
-            if (self.lastEventId != null && ackId != self.lastEventId+1)
-                throw new Error("CSP Transport Protocol Error");
-            self.lastEventId = ackId;
-            if (encoding == 1) {// percent encoding
-                data = atob(data);
-	    }
-            self.onPacket(data);
-        }
-    }
-    self.resume = function(sessionKey, lastEventId, lastSentId) {
-        self.sessionKey = sessionKey;
-        self.lastEventId = lastEventId;
-        self.lastSentId = lastSentId;
-        self.reconnect();
-    }
-    self.send = function(data) {
-        self.buffer += data;
-        if (!self.packetsInFlight) {
-            self.doSend();
-        }
-    }
-    self.doSend = function() {
-        throw new Error("Not Implemented");
-    }
-    self.close = function() {
-        self.stop();
-    }
-    self.stop = function() {
-        self.opened = false;
-        clearTimeout(cometTimer);
-        clearTimeout(sendTimer);
-        clearTimeout(handshakeTimer);
-    }
-    var cometBackoff = 50; // msg
-    var backoff = 50;
-    var handshakeTimer = null;
-    var sendTimer = null;
-    var cometTimer = null;
-    self.handshakeCb = function(data) {
-        if (self.opened) {
-            self.onHandshake(data);
-            backoff = 50;
-        }
-    }
-    self.handshakeErr = function() {
-        if (self.opened) {
-//            handshakeTimer = setTimeout(self.handshake, backoff);
-//            backoff *= 2;
-        }
-    }
-    self.sendCb = function() {
-        self.packetsInFlight = null;
-        backoff = 50;
-        if (self.opened) {
-            if (self.buffer) {
-                self.doSend();
-            }
-        }
-    }
-    self.sendErr = function() {
-        if (self.opened) {
-            sendTimer = setTimeout(self.doSend, backoff);
-            backoff *= 50;
-        }
-    }
-    self.cometCb = function(data) {
-        if (self.opened) {
-            self.processPackets(data);
-            self.reconnect();
-        }
-    }
-    self.cometErr = function() {
-        if (self.opened) {
-            cometTimer = setTimeout(self.reconnect, cometBackoff);
-            cometBackoff *= 2;
-        }
-    }
-}
-
-var transports = {};
-
-transports.xhr = function(cspId, url) {
-    var self = this;
-    Transport.call(self, cspId, url);
-    var makeXhr = function() {
-        if (window.XDomainRequest) {
-            return new XDomainRequest();
-        }
-        // TODO: use XDomainRequest where available.
-        return new XMLHttpRequest();
-    }
-    var sendXhr = makeXhr();
-    var cometXhr = makeXhr();
-    if (!csp.util.isSameDomain(url, location.toString())) {
-        if (!window.XDomainRequest)
-        if (sendXhr.withCredentials === undefined) {
-            throw new Error("Invalid cross-domain transport");
-        }
-    }
-
-    var makeRequest = function(type, url, args, cb, eb, timeout) {
-        var xhr;
-        if (type == 'send') { xhr = sendXhr; }
-        if (type == 'comet') { xhr = cometXhr; }
-        xhr.open('POST', self.url + url, true);
-        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded')
-        var payload = ""
-        for (key in args) {
-            payload += key + '=' + args[key] + '&';
-        }
-        payload = payload.substring(0, payload.length-1)
-        var aborted = false;
-        var timer = null;
-        xhr.onreadystatechange = function() {
-            try {
-            } catch (e) {}
-            if (aborted) { 
-                return eb(); 
-            }
-            if (xhr.readyState == 4) {
-                try {
-                    if (xhr.status == 200) {
-                        clearTimeout(timer);
-                        // XXX: maybe the spec shouldn't wrap ALL responses in ( ).
-                        //      -mcarter 8/11/09
-                        var data = xhr.responseText.substring(1, xhr.responseText.length-1)
-                        cb(JSON.parse(data));
-//                        cb(eval(xhr.responseText));
-                        return;
-                    }
-                } catch(e) { 
-                    //console.log('exception', e);
-                }
-                try {
-                } catch(e) { 
-                    //console.log('ex'); 
-                }
-                return eb();
-            }
-        }
-        if (timeout) {
-            timer = setTimeout(function() { aborted = true; xhr.abort(); }, timeout*1000);
-        }
-        xhr.send(payload)
-
-    }
-
-    this.handshake = function() {
-        self.opened = true;
-        makeRequest("send", "/handshake", { d:"{}" }, self.handshakeCb, self.handshakeErr, 10);
-    }
-    this.doSend = function() {
-        var args;
-        if (!self.packetsInFlight) {
-            self.packetsInFlight = self.toPayload(self.buffer)
-            self.buffer = "";
-        }
-        args = { s: self.sessionKey, d: self.packetsInFlight };
-        makeRequest("send", "/send", args, self.sendCb, self.sendErr, 10);
-    }
-    this.reconnect = function() {
-        var args = { s: self.sessionKey, a: self.lastEventId }
-        makeRequest("comet", "/comet", args, self.cometCb, self.cometErr, 40);
-    }
-    this.toPayload = function(data) {
-	var encoded = btoa(data);
-        var payload = JSON.stringify([[++self.lastSentId, 1, encoded]]);
-        return payload
-    }
-}
-
-
-csp._jsonp = {};
-var _jsonpId = 0;
-function setJsonpCallbacks(cb, eb) {
-    csp._jsonp['cb' + (++_jsonpId)] = cb;
-    csp._jsonp['eb' + (_jsonpId)] = eb;
-    return _jsonpId;
-}
-function removeJsonpCallback(id) {
-    delete csp._jsonp['cb' + id];
-    delete csp._jsonp['eb' + id];
-}
-function getJsonpErrbackPath(id) {
-    return 'parent.csp._jsonp.eb' + id;
-}
-function getJsonpCallbackPath(id) {
-    return 'parent.csp._jsonp.cb' + id;
-}
-
-transports.jsonp = function(cspId, url) {
-    var self = this;
-    Transport.call(self, cspId, url);
-    var createIframe = function() {
-        var i = document.createElement("iframe");
-        i.style.display = 'block';
-        i.style.width = '0';
-        i.style.height = '0';
-        i.style.border = '0';
-        i.style.margin = '0';
-        i.style.padding = '0';
-        i.style.overflow = 'hidden';
-        i.style.visibility = 'hidden';
-        return i;
-    }
-    var ifr = {
-        'bar':   createIframe(),
-        'send':  createIframe(),
-        'comet': createIframe()
+var debug = (function () {
+    var DEBUG = false;
+    if (DEBUG && window.console && console.log) {
+	return (function (m) {
+	    console.log(m);
+	});
+    } else {
+	return (function (m) {});
     };
-
-    var killLoadingBar = function() {
-        window.setTimeout(function() {
-            document.body.appendChild(ifr.bar);
-            document.body.removeChild(ifr.bar);
-        }, 0);
-    }
-    var rId = 0;
-    var makeRequest = function(rType, url, args, cb, eb, timeout) {
-//        console.log('makeRequest', rType, url, args, cb, eb, timeout);
-
-        window.setTimeout(function() {
-            var temp = ifr[rType];
-            // IE6+ uses contentWindow.document, the others use temp.contentDocument.
-            var doc = temp.contentDocument || temp.contentWindow.document || temp.document;
-            var head = doc.getElementsByTagName('head')[0];
-            var errorSuppressed = false;
-            function errback(isIe) {
-                if (!isIe) {
-                    var scripts = doc.getElementsByTagName('script');
-                    var s1 = doc.getElementsByTagName('script')[0]; 
-                    var s2 = doc.getElementsByTagName('script')[1]; 
-                    s1.parentNode.removeChild(s1);
-                    s2.parentNode.removeChild(s2);
-                }
-                removeJsonpCallback(jsonpId);
-                if (!errorSuppressed && self.opened) {
-                    eb.apply(null, arguments);
-                }
-            }
-            function callback() {
-                errorSuppressed = true;
-                if (self.opened) {
-                    cb.apply(null, arguments);
-                }
-                else {
-//                    console.log('suppressing callback', rType, url, args, cb, eb, timeout);
-                }
-            }
-            var jsonpId = setJsonpCallbacks(callback, errback);
-            url += '?'
-            for (key in args) {
-                url += key + '=' + args[key] + '&';
-            }
-            if (rType == "send") {
-                url += 'rs=;&rp=' + getJsonpCallbackPath(jsonpId);
-            }
-            else if (rType == "comet") {
-                url += 'bs=;&bp=' + getJsonpCallbackPath(jsonpId);
-            }
-            var s = doc.createElement("script");
-            s.src = self.url + url;
-            head.appendChild(s);
-
-            if (s.onreadystatechange === null) { // IE
-                // TODO: I suspect that if IE gets half of an HTTP body when
-                //       the connection resets, it will go ahead and execute
-                //       the script tag as if all were well, and then fail
-                //       silently without a loaded event. For this reason
-                //       we should probably also set a timer of DURATION + 10
-                //       or something to catch timeouts eventually.
-                //      -Mcarter 8/11/09
-                s.onreadystatechange = function() {
-                    if (s.readyState == "loaded") {
-                        errback(true);
-                    }
-                }
-            }
-            else {
-                var s = doc.createElement("script");
-                s.innerHTML = getJsonpErrbackPath(jsonpId) + '(false);'
-                head.appendChild(s);
-                killLoadingBar();
-            }
-        }, 0);
-
-    }
-
-    this.handshake = function() {
-        self.opened = true;
-        makeRequest("send", "/handshake", {d: "{}"}, self.handshakeCb, self.handshakeErr, 10);
-    }
-    this.doSend = function() {
-        var args;
-        if (!self.packetsInFlight) {
-            self.packetsInFlight = self.toPayload(self.buffer)
-            self.buffer = "";
-        }
-        args = { s: self.sessionKey, d: self.packetsInFlight };
-        makeRequest("send", "/send", args, self.sendCb, self.sendErr, 10);
-    }
-    this.reconnect = function() {
-        var args = { s: self.sessionKey, a: self.lastEventId }
-        makeRequest("comet", "/comet", args, self.cometCb, self.cometErr, 40);
-    }
-    this.toPayload = function(data) {
-        var payload = JSON.stringify([[++self.lastSentId, 0, data]]); // XXX: firefox only!
-        return payload
-    }
-    document.body.appendChild(ifr.send);
-    document.body.appendChild(ifr.comet);
-    killLoadingBar();
-}
-
-
-
-
-
-
-
 })();
 
+/**
+*
+*  Base64 encode / decode
+*  http://www.webtoolkit.info/
+*
+**/
+ 
+var Base64 = {
+ 
+    // private property
+    _keyStr : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
+ 
+    // public method for encoding
+    encode : function (input) {
+	var output = "";
+	var chr1, chr2, chr3, enc1, enc2, enc3, enc4;
+	var i = 0;
+ 
+	// input = Base64._utf8_encode(input);
+ 
+	while (i < input.length) {
+ 
+	    chr1 = input.charCodeAt(i++);
+	    chr2 = input.charCodeAt(i++);
+	    chr3 = input.charCodeAt(i++);
+ 
+	    enc1 = chr1 >> 2;
+	    enc2 = ((chr1 & 3) << 4) | (chr2 >> 4);
+	    enc3 = ((chr2 & 15) << 2) | (chr3 >> 6);
+	    enc4 = chr3 & 63;
+ 
+	    if (isNaN(chr2)) {
+		enc3 = enc4 = 64;
+	    } else if (isNaN(chr3)) {
+		enc4 = 64;
+	    }
+ 
+	    output = output +
+		this._keyStr.charAt(enc1) + this._keyStr.charAt(enc2) +
+		this._keyStr.charAt(enc3) + this._keyStr.charAt(enc4);
+ 
+	}
+ 
+	return output;
+    },
+ 
+    // public method for decoding
+    decode : function (input) {
+	var output = "";
+	var chr1, chr2, chr3;
+	var enc1, enc2, enc3, enc4;
+	var i = 0;
+ 
+	input = input.replace(/[^A-Za-z0-9\+\/\=]/g, "");
+ 
+	while (i < input.length) {
+ 
+	    enc1 = this._keyStr.indexOf(input.charAt(i++));
+	    enc2 = this._keyStr.indexOf(input.charAt(i++));
+	    enc3 = this._keyStr.indexOf(input.charAt(i++));
+	    enc4 = this._keyStr.indexOf(input.charAt(i++));
+ 
+	    chr1 = (enc1 << 2) | (enc2 >> 4);
+	    chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+	    chr3 = ((enc3 & 3) << 6) | enc4;
+ 
+	    output = output + String.fromCharCode(chr1);
+ 
+	    if (enc3 != 64) {
+		output = output + String.fromCharCode(chr2);
+	    }
+	    if (enc4 != 64) {
+		output = output + String.fromCharCode(chr3);
+	    }
+ 
+	}
+ 
+	// output = Base64._utf8_decode(output);
+ 
+	return output;
+ 
+    },
+ 
+    // // private method for UTF-8 encoding
+    // _utf8_encode : function (string) {
+    // 	string = string.replace(/\r\n/g,"\n");
+    // 	var utftext = "";
+ 
+    // 	for (var n = 0; n < string.length; n++) {
+ 
+    // 	    var c = string.charCodeAt(n);
+ 
+    // 	    if (c < 128) {
+    // 		utftext += String.fromCharCode(c);
+    // 	    }
+    // 	    else if((c > 127) && (c < 2048)) {
+    // 		utftext += String.fromCharCode((c >> 6) | 192);
+    // 		utftext += String.fromCharCode((c & 63) | 128);
+    // 	    }
+    // 	    else {
+    // 		utftext += String.fromCharCode((c >> 12) | 224);
+    // 		utftext += String.fromCharCode(((c >> 6) & 63) | 128);
+    // 		utftext += String.fromCharCode((c & 63) | 128);
+    // 	    }
+ 
+    // 	}
+ 
+    // 	return utftext;
+    // },
+ 
+    // // private method for UTF-8 decoding
+    // _utf8_decode : function (utftext) {
+    // 	var string = "";
+    // 	var i = 0;
+    // 	var c = c1 = c2 = 0;
+ 
+    // 	while ( i < utftext.length ) {
+ 
+    // 	    c = utftext.charCodeAt(i);
+ 
+    // 	    if (c < 128) {
+    // 		string += String.fromCharCode(c);
+    // 		i++;
+    // 	    }
+    // 	    else if((c > 191) && (c < 224)) {
+    // 		c2 = utftext.charCodeAt(i+1);
+    // 		string += String.fromCharCode(((c & 31) << 6) | (c2 & 63));
+    // 		i += 2;
+    // 	    }
+    // 	    else {
+    // 		c2 = utftext.charCodeAt(i+1);
+    // 		c3 = utftext.charCodeAt(i+2);
+    // 		string += String.fromCharCode(((c & 15) << 12) | ((c2 & 63) << 6) | (c3 & 63));
+    // 		i += 3;
+    // 	    }
+ 
+    // 	}
+ 
+    // 	return string;
+    // }
+ 
+};
+
+var CSPSession = function (host, port, path, transport) {
+    this._host = host;
+    this._port = port;
+    this._path = path;
+    
+    this._packets_to_send = new Array();
+    this._last_packet_id = -1;
+    this._current_packet_id = 1;
+    this._transport = null;
+    if (transport) {
+	this._transport_choices = [transport];
+    } else {
+	this._transport_choices = ['xhrstreaming', 'jsonp', 'polling'];
+    };
+    this.onopen = function () { debug("session opened") };
+    this.onread = function (message) { debug("session read: " + message) };
+    this.onclose = function () { debug("session closed") };
+    this.onerror = function (e) {
+	debug("transport error detected for transport " + this._transport.name);
+	var open = !this._transport.opened;
+	this._transport = this.getTransport(this, this._host, this._port, this._path)
+	debug('trying transport: ' + this._transport.name);
+	if (open) {
+	    this._transport.open();
+	} else {
+	    this._transport.opened = true;
+	    this._transport.start();
+	};
+    };
+};
+
+CSPSession.prototype.getTransport = function (session, host, port, path) {
+    var transports = {
+	polling: CSPPollingTransport,
+	xhrstreaming: CSPXHRStreamingTransport,
+	jsonp: CSPJSONPTransport
+    };
+    var preference = null;
+    if (this._transport) {
+	for (var i=0; i < this._transport_choices.length; i++) {
+	    if (this._transport.name == this._transport_choices[i]) {
+		if (i < (this._transport_choices.length - 1)) {
+		    preference = this._transport_choices[i+1];
+		    break
+		};
+	    };
+	};
+	if (!preference) {
+	    throw "NoWorkingTransportsError";
+	};
+    } else {
+	preference = this._transport_choices[0]
+    };
+    return new transports[preference](session, host, port, path);
+};
+
+CSPSession.prototype.open = function () {
+    this._transport = this.getTransport(this, this._host, this._port, this._path);
+    try {
+	this._transport.open();
+    } catch (e) {
+	self.onerror(e);
+    };
+};
+
+CSPSession.prototype.close = function () {
+    this._transport.close();
+};
+
+CSPSession.prototype._makePacket = function (data) {
+    var encoded_data = Base64.encode(data);
+    var packet = [this._current_packet_id, 1, encoded_data];
+    this._current_packet_id += 1;
+    return packet;
+};
+
+CSPSession.prototype.write = function (data) {
+    var packet = this._makePacket(data);
+    this._packets_to_send.push(packet);
+    var self = this;
+    var message = JSON.stringify(this._packets_to_send);
+    this._transport.send(message, function () {
+	self._packets_to_send = new Array();
+    });
+};
+
+CSPSession.prototype._receive = function (message) {
+    var batch = JSON.parse(message);
+    for (var i=0; i < batch.length; i++) {
+	var data = batch[i][2];
+	if (batch[i][1] == 1) {
+	    data = Base64.decode(batch[i][2]);
+	}
+	this.onread(data);
+	this._last_packet_id = batch[i][0];
+    };
+};
+
+var CSPTransport = function (session, host, port, path) {
+    var self = this;
+    
+    this._session = session;
+    this._host = host;
+    this._port = port;
+    this._path = path;
+    this.opened = false;
+    
+    this._onopen = function () {
+	(this.onopen || function () { debug("transport " + self.name + " opened") })();
+	this._session.onopen();
+	this.opened = true;
+	this.start();
+    };
+    this._onread = function (message) {
+	(this.onread || function () { debug("transport read: " + message) })();
+	this._session._receive(message);
+    };
+    this._onclose = function () {
+	(this.onclose || function () { debug("transport closed") })();
+	this._session.onclose();
+	this.opened = false;
+    };
+    this._onerror = function (e) {
+	(this.onerror || function () { debug("transport error: " + e.toString()) })();
+	this._session.onerror(e);
+    };
+};
+
+CSPTransport.prototype.makeUrl = function (path, args) {
+    var url = 'http://' + this._host + ':' + this._port + '/' + this._path;
+    if (path) {
+	url += '/' + path;
+    };
+    
+    if (args) {
+	url += "?"
+	for (var arg in args) {
+	    if (url.slice(-1) != "?") {
+		url += "&";
+	    };
+	    url += arg + "=" + args[arg];
+	};
+    };
+    
+    return url
+};
+
+CSPTransport.prototype.send = function (data, success_callback) {
+    try {
+	var url = this.makeUrl('send', 
+			       {s: this._session._session_id,
+				d: data,
+				a: this._session._last_packet_id}
+			      );
+	debug(url);
+	var xhr = createXHR();
+	xhr.onreadystatechange = function () {
+	    if (this.readyState == 4) {
+		if (this.responseText.slice(1, -1) == "OK") {
+		    success_callback();
+		} else {
+		    debug("SEND_ERROR: [" + this.responseText + "]");
+		};
+	    };
+	};
+	xhr.open('GET', url);
+	xhr.send();
+    } catch (e) {
+	self._onerror(e);
+    };
+};
+
+CSPTransport.prototype.close = function () {
+    this._closing = true;
+};
+
+CSPTransport.prototype._close = function () {
+    this._onclose();
+};
+
+CSPTransport.prototype.start = function () {
+    var self = this;
+    self.doComet();
+};
+
+CSPTransport.prototype.doXHR = function (url, callback, data) {
+    try {
+	debug(url);
+	var xhr = createXHR();
+	xhr.onreadystatechange = callback;
+	xhr.open('GET', url);
+	if (data) {
+	    xhr.send(data);
+	} else {
+	    xhr.send();
+	};
+    } catch (e) {
+	self._onerror(e);
+    };
+};
+
+CSPTransport.prototype.parseHandshake = function (handshake) {
+    return JSON.parse(handshake)['session'];
+};
+
+var CSPPollingTransport = function (session, host, port, path) {
+    CSPTransport.call(this, session, host, port, path);
+    this._closing = false;
+    this.name = "polling";
+};
+CSPPollingTransport.prototype = new CSPTransport();
 
 
 
+CSPPollingTransport.prototype.open = function () {
+    var self = this;
+    var url = this.makeUrl('handshake', 
+			   {d: '{}'}
+			  );
+    debug(url);
+    var xhr = createXHR();
+    xhr.onreadystatechange = function () {
+	if (this.readyState == 4) {
+	    self._session._session_id = self.parseHandshake(this.responseText);
+	    self._onopen();
+	};
+    };
+    xhr.open('GET', url);
+    xhr.send();
+};
+
+CSPPollingTransport.prototype.doComet = function () {
+    debug('making comet request');
+    var self = this;
+    var url = this.makeUrl('comet',
+			   {s: this._session._session_id,
+			    du: "0",
+			    a: this._session._last_packet_id}
+			  );
+    try {
+	this.doXHR(url, function () {
+	    if (this.readyState == 4) {
+		self._onread(this.responseText);
+		if (!self._closing) {
+		    setTimeout(function () { self.doComet() }, 1000);
+		} else {
+		    self._close();
+		};
+	    };
+	});
+    } catch (e) {
+	self._onerror(e);
+    };
+};
+
+CSPPollingTransport.prototype.doSend = function () {
+};
+
+CSPPollingTransport.prototype.doClose = function () {
+};
+
+var CSPXHRStreamingTransport = function (session, host, port, path) {
+    CSPTransport.call(this, session, host, port, path);
+    this.closeable = true;
+    this.name = "xhrstreaming";
+};
+CSPXHRStreamingTransport.prototype = new CSPTransport();
+
+CSPXHRStreamingTransport.prototype.open = function () {
+    var self = this;
+    var url = this.makeUrl('handshake', 
+			   {d: '{}',
+			    ct:encodeURI('application/x-trickly-streaming')}
+			  );
+    var onReadyStateChange = function () {
+	if (this.readyState == 4) {
+	    self._session._session_id = self.parseHandshake(this.responseText);
+	    self._onopen();
+	};
+    };
+    try {
+	this.doXHR(url, onReadyStateChange);
+    } catch (e) {
+	self._onerror(e);
+    };
+};
+
+CSPXHRStreamingTransport.prototype.doComet = function () {
+    debug('making comet request');
+    var self = this;
+    var url = this.makeUrl('comet',
+			   {s: this._session._session_id,
+			    du: "10",
+			    is: "1",
+			    p: "256",
+			    a: this._session._last_packet_id}
+			  );
+    try {
+	debug(url);
+	this.xhr = createXHR();
+	var data_received = "";
+	this.xhr.onreadystatechange = function () {
+	    debug('XHR callback:(' + this.responseText + ')');
+	    try {
+		self.closeable = false;
+		if (this.readyState > 2) {
+		    if (this.status != 200) {
+			this.abort();
+			return
+		    };
+		};
+		
+		if (this.readyState == 3) {
+		    if (this.responseText.length == data_received.length) {
+			return
+		    };
+		    var message = this.responseText.slice(data_received.length);
+		    data_received = this.responseText;
+		    self._onread(message);
+		    self.closeable = true;
+		} else if (this.readyState == 4) {
+		    if (!this.responseText.length) return;
+		    
+		    if (this.responseText.length != data_received.length) {
+			var message = this.responseText.slice(data_received.length);
+			data_received = this.responseText;
+			self._onread(message);
+		    };
+		    self.closeable = true;
+		    if (!self._closing) {
+			setTimeout(function () { self.doComet() }, 0);
+		    } else {
+			self._close();
+		    };
+		} else {
+		    self.closeable = true;
+		};
+	    } catch (e) {
+		self._onerror(e);
+	    };
+	};
+	this.xhr.open('GET', url);
+	this.xhr.send();
+	this.closer = function () {
+	    if (self.closeable) {
+		self.xhr.abort()
+		self._close();
+	    } else {
+		setTimeout(self.closer, 1);
+	    };
+	};
+    } catch (e) {
+	self._onerror(e);
+    };
+};
+
+CSPXHRStreamingTransport.prototype.close = function () {
+    debug("closing");
+    this._closing = true;
+    this.closer();
+};
+
+var CSPJSONPTransport = function (session, host, port, path) {
+    CSPTransport.call(this, session, host, port, path);
+    this.name = "jsonp";
+};
+CSPJSONPTransport.prototype = new CSPTransport();
+
+CSPJSONPTransport.prototype.open = function () {
+    var self = this;
+    var url = this.makeUrl('handshake', 
+			   {d: '{}',
+			    bp: "trickly_comet_cb('",
+			    bs: "');",
+			    rp: "trickly_cb('",
+			    rs: "');",
+			    ct: encodeURI('text/javascript')}
+			  );
+    try {
+	debug(url);
+	var script_tag_id = '__xxx__trickly_jsonp_open_tag__';
+	window.trickly_cb = function (message) {
+	    self._session._session_id = self.parseHandshake(message);
+	    var tag = document.getElementById(script_tag_id);
+	    document.body.removeChild(tag);
+	    try {
+		delete window.trickly_cb;
+	    } catch (e) {
+	    };
+	    self._onopen();
+	};
+	var tag = document.createElement('script');
+	tag.id = script_tag_id;
+	tag.type = 'text/javascript';
+	tag.src = url;
+	document.body.appendChild(tag);
+    } catch (e) {
+	self._onerror(e);
+    };
+};
+
+CSPJSONPTransport.prototype.send = function (data, success_callback) {
+    var url = this.makeUrl('send', 
+			   {s: this._session._session_id,
+			    d: data,
+			    a: this._session._last_packet_id}
+			  );
+    try {
+    debug(url);
+    var script_tag_id = '__xxx__trickly_jsonp_send_tag__';
+    window.trickly_cb = function (message) {
+	if (message == "OK") {
+	    success_callback();
+	};
+	try {
+	    delete window.trickly_cb;
+	} catch (e) {
+	};
+	var tag = document.getElementById(script_tag_id);
+	document.body.removeChild(tag);
+    };
+    var tag = document.createElement('script');
+    tag.id = script_tag_id;
+    tag.type = 'text/javascript';
+    tag.src = url;
+    document.body.appendChild(tag);
+    } catch (e) {
+	self._onerror(e);
+    };
+};
+
+CSPJSONPTransport.prototype.doComet = function () {
+    debug('making comet request');
+    var self = this;
+    var url = this.makeUrl('comet/' + (new Date()).getTime().toString(),
+			   {s: this._session._session_id,
+			    du: "30",
+			    a: this._session._last_packet_id,
+			    is: 0
+			   }
+			  );
+    try {
+	debug(url);
+	var script_tag_id = '__xxx__trickly_jsonp_comet_tag__';
+	window.trickly_comet_cb = function (message) {
+	    self._onread(message);
+	    var tag = document.getElementById(script_tag_id);
+	    document.body.removeChild(tag);
+	    if (!self._closing) {
+		setTimeout(function () { self.doComet() }, 0);
+	    } else {
+		self._close();
+	    };
+	};
+	var tag = document.createElement('script');
+	tag.id = script_tag_id;
+	tag.type = 'text/javascript';
+	tag.src = url;
+	document.body.appendChild(tag);
+    } catch (e) {
+	self._onerror(e);
+    };
+};

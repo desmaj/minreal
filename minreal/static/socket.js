@@ -5,11 +5,10 @@ var STATE = {
     'CLOSING': 3,
     'CLOSED': 3,
 };
-window.TCPSocket = function (baseURL) {
-    this._cspURL = baseURL;
+window.TCPSocket = function (host, port, path) {
     this._host = null;
     this._port = null;
-    this._csp = new csp.CometSession();
+    this._csp = new CSPSession(host, port, path);
     this._csp.onread = this.onMessage.bind(this);
     this._csp.onopen = this.onOpen.bind(this);
     this._csp.onclose = this.onClose.bind(this);
@@ -19,7 +18,7 @@ window.TCPSocket = function (baseURL) {
 TCPSocket.prototype.connect = function (host, port) {
     this._host = host;
     this._port = port;
-    this._csp.connect(this._cspURL);
+    this._csp.open();
     this._state = STATE.INITIALIZED;
 }
 TCPSocket.prototype.send = function (bytes) {

@@ -38,7 +38,6 @@ class TCPClient(MinrealClient):
         self._sock = None
 
     def handle_data(self, message):
-        # message = ''.join([chr(ord(c)) for c in message])
         payload = msgpack.unpackb(message)
         if 'connect' in payload:
             host, port_str = payload['connect'].split('::')
