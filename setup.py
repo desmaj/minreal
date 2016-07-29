@@ -1,9 +1,13 @@
+import os
+
 from setuptools import setup, find_packages
 
-version = '0.1.3'
+version = '0.2.0'
 
 DESCRIPTION = ("A Python comet server build on CSP (Comet Session"
                " Protocol) and providing a TCP socket proxy.")
+
+CHANGELOG = open(os.path.join(os.path.dirname(__file__), 'CHANGES.rst'))
 
 LONG_DESCRIPTION = DESCRIPTION + """
 
@@ -28,7 +32,7 @@ Take a look at the [annotated example]
 to get started.
 
 
-"""
+""" + CHANGELOG
 
 setup(name='minreal',
       version=version,
