@@ -7,7 +7,7 @@ version = '0.2.0'
 DESCRIPTION = ("A Python comet server build on CSP (Comet Session"
                " Protocol) and providing a TCP socket proxy.")
 
-CHANGELOG = open(os.path.join(os.path.dirname(__file__), 'CHANGES.rst'))
+CHANGELOG = open(os.path.join(os.path.dirname(__file__), 'CHANGES.rst')).read()
 
 LONG_DESCRIPTION = DESCRIPTION + """
 
