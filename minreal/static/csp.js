@@ -2,16 +2,15 @@ var createXHR = function () {
     return new XMLHttpRequest()
 };
 
-var debug = (function () {
-    var DEBUG = false;
-    if (DEBUG && window.console && console.log) {
+var debugFactory = function (flag) {
+    if (flag && window.console && console.log) {
 	return (function (m) {
 	    console.log(m);
 	});
     } else {
 	return (function (m) {});
     };
-})();
+};
 
 /**
 *
@@ -156,10 +155,11 @@ var Base64 = {
  
 };
 
-var CSPSession = function (host, port, path, transport) {
+var CSPSession = function (host, port, path, transport, debug) {
     this._host = host;
     this._port = port;
     this._path = path;
+    this._debug = debugFactory(debug);
     
     this._packets_to_send = new Array();
     this._last_packet_id = -1;
@@ -170,24 +170,24 @@ var CSPSession = function (host, port, path, transport) {
     } else {
 	this._transport_choices = ['xhrstreaming', 'jsonp', 'polling'];
     };
-    this.onopen = function () { debug("session opened") };
-    this.onread = function (message) { debug("session read: " + message) };
-    this.onclose = function () { debug("session closed") };
+    this.onopen = function () { this._debug("session opened") };
+    this.onread = function (message) { this._debug("session read: " + message) };
+    this.onclose = function () { this._debug("session closed") };
     this.onerror = function (e) {
-	debug("transport error detected for transport " + this._transport.name);
+	this._debug("transport error detected for transport " + this._transport.name);
 	var open = !this._transport.opened;
-	this._transport = this.getTransport(this, this._host, this._port, this._path)
-	debug('trying transport: ' + this._transport.name);
+	this._transport = this.getTransport(this, this._host, this._port, this._path, this._debug)
+	this._debug('trying transport: ' + this._transport.name);
 	if (open) {
 	    this._transport.open();
 	} else {
 	    this._transport.opened = true;
 	    this._transport.start();
 	};
-    };
+    }.bind(this);
 };
 
-CSPSession.prototype.getTransport = function (session, host, port, path) {
+CSPSession.prototype.getTransport = function (session, host, port, path, debug) {
     var transports = {
 	polling: CSPPollingTransport,
 	xhrstreaming: CSPXHRStreamingTransport,
@@ -209,15 +209,15 @@ CSPSession.prototype.getTransport = function (session, host, port, path) {
     } else {
 	preference = this._transport_choices[0]
     };
-    return new transports[preference](session, host, port, path);
+    return new transports[preference](session, host, port, path, debug);
 };
 
 CSPSession.prototype.open = function () {
-    this._transport = this.getTransport(this, this._host, this._port, this._path);
+    this._transport = this.getTransport(this, this._host, this._port, this._path, this._debug);
     try {
 	this._transport.open();
     } catch (e) {
-	self.onerror(e);
+	this.onerror(e);
     };
 };
 
@@ -254,7 +254,7 @@ CSPSession.prototype._receive = function (message) {
     };
 };
 
-var CSPTransport = function (session, host, port, path) {
+var CSPTransport = function (session, host, port, path, debug) {
     var self = this;
     
     this._session = session;
@@ -262,6 +262,7 @@ var CSPTransport = function (session, host, port, path) {
     this._port = port;
     this._path = path;
     this.opened = false;
+    this._debug = debug;
     
     this._onopen = function () {
 	(this.onopen || function () { debug("transport " + self.name + " opened") })();
@@ -310,14 +311,14 @@ CSPTransport.prototype.send = function (data, success_callback) {
 				d: data,
 				a: this._session._last_packet_id}
 			      );
-	debug(url);
+	this._debug(url);
 	var xhr = createXHR();
 	xhr.onreadystatechange = function () {
 	    if (this.readyState == 4) {
 		if (this.responseText.slice(1, -1) == "OK") {
 		    success_callback();
 		} else {
-		    debug("SEND_ERROR: [" + this.responseText + "]");
+		    this._debug("SEND_ERROR: [" + this.responseText + "]");
 		};
 	    };
 	};
@@ -343,7 +344,7 @@ CSPTransport.prototype.start = function () {
 
 CSPTransport.prototype.doXHR = function (url, callback, data) {
     try {
-	debug(url);
+	this._debug(url);
 	var xhr = createXHR();
 	xhr.onreadystatechange = callback;
 	xhr.open('GET', url);
@@ -361,8 +362,8 @@ CSPTransport.prototype.parseHandshake = function (handshake) {
     return JSON.parse(handshake)['session'];
 };
 
-var CSPPollingTransport = function (session, host, port, path) {
-    CSPTransport.call(this, session, host, port, path);
+var CSPPollingTransport = function (session, host, port, path, debug) {
+    CSPTransport.call(this, session, host, port, path, debug);
     this._closing = false;
     this.name = "polling";
 };
@@ -375,7 +376,7 @@ CSPPollingTransport.prototype.open = function () {
     var url = this.makeUrl('handshake', 
 			   {d: '{}'}
 			  );
-    debug(url);
+    this._debug(url);
     var xhr = createXHR();
     xhr.onreadystatechange = function () {
 	if (this.readyState == 4) {
@@ -388,7 +389,7 @@ CSPPollingTransport.prototype.open = function () {
 };
 
 CSPPollingTransport.prototype.doComet = function () {
-    debug('making comet request');
+    this._debug('making comet request');
     var self = this;
     var url = this.makeUrl('comet',
 			   {s: this._session._session_id,
@@ -417,8 +418,8 @@ CSPPollingTransport.prototype.doSend = function () {
 CSPPollingTransport.prototype.doClose = function () {
 };
 
-var CSPXHRStreamingTransport = function (session, host, port, path) {
-    CSPTransport.call(this, session, host, port, path);
+var CSPXHRStreamingTransport = function (session, host, port, path, debug) {
+    CSPTransport.call(this, session, host, port, path, debug);
     this.closeable = true;
     this.name = "xhrstreaming";
 };
@@ -444,7 +445,7 @@ CSPXHRStreamingTransport.prototype.open = function () {
 };
 
 CSPXHRStreamingTransport.prototype.doComet = function () {
-    debug('making comet request');
+    this._debug('making comet request');
     var self = this;
     var url = this.makeUrl('comet',
 			   {s: this._session._session_id,
@@ -454,11 +455,11 @@ CSPXHRStreamingTransport.prototype.doComet = function () {
 			    a: this._session._last_packet_id}
 			  );
     try {
-	debug(url);
+	this._debug(url);
 	this.xhr = createXHR();
 	var data_received = "";
 	this.xhr.onreadystatechange = function () {
-	    debug('XHR callback:(' + this.responseText + ')');
+	    self._debug('XHR callback:(' + this.responseText + ')');
 	    try {
 		self.closeable = false;
 		if (this.readyState > 2) {
@@ -513,13 +514,13 @@ CSPXHRStreamingTransport.prototype.doComet = function () {
 };
 
 CSPXHRStreamingTransport.prototype.close = function () {
-    debug("closing");
+    this._debug("closing");
     this._closing = true;
     this.closer();
 };
 
-var CSPJSONPTransport = function (session, host, port, path) {
-    CSPTransport.call(this, session, host, port, path);
+var CSPJSONPTransport = function (session, host, port, path, debug) {
+    CSPTransport.call(this, session, host, port, path, debug);
     this.name = "jsonp";
 };
 CSPJSONPTransport.prototype = new CSPTransport();
@@ -535,7 +536,7 @@ CSPJSONPTransport.prototype.open = function () {
 			    ct: encodeURI('text/javascript')}
 			  );
     try {
-	debug(url);
+	this._debug(url);
 	var script_tag_id = '__xxx__trickly_jsonp_open_tag__';
 	window.trickly_cb = function (message) {
 	    self._session._session_id = self.parseHandshake(message);
@@ -564,7 +565,7 @@ CSPJSONPTransport.prototype.send = function (data, success_callback) {
 			    a: this._session._last_packet_id}
 			  );
     try {
-    debug(url);
+    this._debug(url);
     var script_tag_id = '__xxx__trickly_jsonp_send_tag__';
     window.trickly_cb = function (message) {
 	if (message == "OK") {
@@ -588,7 +589,7 @@ CSPJSONPTransport.prototype.send = function (data, success_callback) {
 };
 
 CSPJSONPTransport.prototype.doComet = function () {
-    debug('making comet request');
+    this._debug('making comet request');
     var self = this;
     var url = this.makeUrl('comet/' + (new Date()).getTime().toString(),
 			   {s: this._session._session_id,
@@ -598,7 +599,7 @@ CSPJSONPTransport.prototype.doComet = function () {
 			   }
 			  );
     try {
-	debug(url);
+	this._debug(url);
 	var script_tag_id = '__xxx__trickly_jsonp_comet_tag__';
 	window.trickly_comet_cb = function (message) {
 	    self._onread(message);
