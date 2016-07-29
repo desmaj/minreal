@@ -2,7 +2,7 @@ import os
 
 from setuptools import setup, find_packages
 
-version = '0.2.0'
+version = '0.2.2'
 
 DESCRIPTION = ("A Python comet server build on CSP (Comet Session"
                " Protocol) and providing a TCP socket proxy.")

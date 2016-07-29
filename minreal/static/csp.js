@@ -428,7 +428,7 @@ CSPXHRStreamingTransport.prototype.open = function () {
     var self = this;
     var url = this.makeUrl('handshake', 
 			   {d: '{}',
-			    ct:encodeURI('application/x-trickly-streaming')}
+			    ct: 'application/octet-stream'}
 			  );
     var onReadyStateChange = function () {
 	if (this.readyState == 4) {

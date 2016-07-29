@@ -42,11 +42,11 @@ class CSPResponseFactory(object):
             'request_suffix': session_vars['rs'],
         }
         response = self.SEND_RESPONSE_FORMAT.format(**response_vars)
-        headers = {'Content-type': session_vars['ct']}
+        headers = {'Content-type': session_vars['ct'].encode('utf8')}
         return headers, response
 
     def render_send_response(self, session_vars, message):
-        headers = {'Content-type': session_vars['ct']}
+        headers = {'Content-type': session_vars['ct'].encode('utf8')}
         response_vars = {
             'data': json.dumps(message),
             'prebuffer': ' ' * session_vars['ps'],
@@ -57,7 +57,7 @@ class CSPResponseFactory(object):
         return headers, self.SEND_RESPONSE_FORMAT.format(**response_vars)
 
     def render_comet_response(self, session_vars, packets):
-        headers = {'Content-type': session_vars['ct']}
+        headers = {'Content-type': session_vars['ct'].encode('utf8')}
         yield headers
 
         prebuffer = ' ' * session_vars['ps']
