@@ -33,9 +33,13 @@ class CSPResponseFactory(object):
         '{batch_prefix}{data}{batch_suffix}'
     )
 
-    def render_handshake_response(self, session_vars, session_id):
+    def render_handshake_response(self, session_vars, session_id, environ):
+        handshake_data = {
+            'session': session_id,
+            'environ': environ,
+        }
         response_vars = {
-            'data': json.dumps({'session': session_id}),
+            'data': json.dumps(handshake_data),
             'prebuffer': ' ' * session_vars['ps'],
             'preamble': session_vars['p'],
             'request_prefix': session_vars['rp'],
@@ -103,7 +107,7 @@ class CSPSession(object):
         parsed_session_vars['ct'] = request.get('ct', 'text/html')
         return parsed_session_vars
 
-    def __init__(self, session_id, client_factory, request_vars, session_vars):
+    def __init__(self, session_id, client_factory, request_vars, session_vars, env):
         self._id = session_id
         self._vars = session_vars.copy()
         self._next_packet_id = 1
@@ -112,11 +116,16 @@ class CSPSession(object):
         self._packet_queue = queue.Queue()
         self._client = client_factory(self.add_chunk)
         self._client_gt = eventlet.spawn(self._client.run)
+        self._client_environ = env
 
     @classmethod
-    def create(cls, request_vars, session_vars, client_factory):
+    def create(cls, request_vars, session_vars, client_factory, environ):
         session_uuid = str(uuid.uuid4())
-        return cls(session_uuid, client_factory, request_vars, session_vars)
+        return cls(session_uuid,
+                   client_factory,
+                   request_vars,
+                   session_vars,
+                   environ)
 
     @property
     def id(self):
@@ -214,13 +223,18 @@ class CSPApp(object):
         request = webob.Request(environ).params
         request_vars = CSPSession.parse_request_vars(request)
         session_vars = CSPSession.parse_session_vars(request)
+        client_environ = {
+            'CLIENT_ADDR': environ['REMOTE_ADDR'],
+            'CLIENT_PORT': environ['REMOTE_PORT'],
+        }
         session = CSPSession.create(request_vars,
                                     session_vars,
-                                    self._client_factory)
+                                    self._client_factory,
+                                    client_environ)
         self._sessions[session.id] = session
 
         headers, response = self._response_factory.render_handshake_response(
-            session.session_vars, session.id
+            session.session_vars, session.id, client_environ
         )
         return webob.Response(headers=headers, app_iter=response)(
             environ, start_response)

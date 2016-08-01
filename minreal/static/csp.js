@@ -37,22 +37,21 @@ var Base64 = {
 	    chr1 = input.charCodeAt(i++);
 	    chr2 = input.charCodeAt(i++);
 	    chr3 = input.charCodeAt(i++);
- 
+	    
 	    enc1 = chr1 >> 2;
 	    enc2 = ((chr1 & 3) << 4) | (chr2 >> 4);
 	    enc3 = ((chr2 & 15) << 2) | (chr3 >> 6);
 	    enc4 = chr3 & 63;
- 
+
 	    if (isNaN(chr2)) {
 		enc3 = enc4 = 64;
 	    } else if (isNaN(chr3)) {
 		enc4 = 64;
 	    }
- 
+
 	    output = output +
 		this._keyStr.charAt(enc1) + this._keyStr.charAt(enc2) +
 		this._keyStr.charAt(enc3) + this._keyStr.charAt(enc4);
- 
 	}
  
 	return output;
@@ -170,9 +169,14 @@ var CSPSession = function (host, port, path, transport, debug) {
     } else {
 	this._transport_choices = ['xhrstreaming', 'jsonp', 'polling'];
     };
-    this.onopen = function () { this._debug("session opened") };
-    this.onread = function (message) { this._debug("session read: " + message) };
-    this.onclose = function () { this._debug("session closed") };
+    this.onopen = function (environ) {
+	this._debug("session opened")
+    }.bind(this);
+    this._onopen = function (environ) {
+	this.onopen(environ);
+    }.bind(this);
+    this.onread = function (message) { this._debug("session read: " + message) }.bind(this);
+    this.onclose = function () { this._debug("session closed") }.bind(this);
     this.onerror = function (e) {
 	this._debug("transport error detected for transport " + this._transport.name);
 	var open = !this._transport.opened;
@@ -209,7 +213,9 @@ CSPSession.prototype.getTransport = function (session, host, port, path, debug) 
     } else {
 	preference = this._transport_choices[0]
     };
-    return new transports[preference](session, host, port, path, debug);
+    var transport = new transports[preference](session, host, port, path, debug);
+    transport.onopen = this._on_transport_open.bind(this);
+    return transport;
 };
 
 CSPSession.prototype.open = function () {
@@ -219,6 +225,10 @@ CSPSession.prototype.open = function () {
     } catch (e) {
 	this.onerror(e);
     };
+};
+
+CSPSession.prototype._on_transport_open = function (environ) {
+    this._onopen(environ);
 };
 
 CSPSession.prototype.close = function () {
@@ -264,9 +274,11 @@ var CSPTransport = function (session, host, port, path, debug) {
     this.opened = false;
     this._debug = debug;
     
-    this._onopen = function () {
-	(this.onopen || function () { debug("transport " + self.name + " opened") })();
-	this._session.onopen();
+    this._onopen = function (environ) {
+	var onopen = this.onopen || function (environ) {
+	    debug("transport " + self.name + " opened");
+	};
+	onopen(environ);
 	this.opened = true;
 	this.start();
     };
@@ -304,26 +316,39 @@ CSPTransport.prototype.makeUrl = function (path, args) {
     return url
 };
 
+CSPTransport.prototype.makeBody = function (args) {
+    var body = ""
+    for (var arg in args) {
+	if (body.length > 0) {
+	    body += "&";
+	}
+	body += arg + "=" + encodeURIComponent(args[arg]);
+    };
+    return body;
+}
+
 CSPTransport.prototype.send = function (data, success_callback) {
+    var self = this;
     try {
-	var url = this.makeUrl('send', 
-			       {s: this._session._session_id,
-				d: data,
-				a: this._session._last_packet_id}
-			      );
+	var url = this.makeUrl('send')
+	var body = this.makeBody({s: this._session._session_id,
+				  d: data,
+				  a: this._session._last_packet_id});
 	this._debug(url);
+	this._debug(body);
 	var xhr = createXHR();
 	xhr.onreadystatechange = function () {
 	    if (this.readyState == 4) {
 		if (this.responseText.slice(1, -1) == "OK") {
 		    success_callback();
 		} else {
-		    this._debug("SEND_ERROR: [" + this.responseText + "]");
+		    self._debug("SEND_ERROR: [" + this.responseText + "]");
 		};
 	    };
 	};
-	xhr.open('GET', url);
-	xhr.send();
+	xhr.open('POST', url);
+	xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+	xhr.send(body);
     } catch (e) {
 	self._onerror(e);
     };
@@ -347,7 +372,8 @@ CSPTransport.prototype.doXHR = function (url, callback, data) {
 	this._debug(url);
 	var xhr = createXHR();
 	xhr.onreadystatechange = callback;
-	xhr.open('GET', url);
+	xhr.open('POST', url);
+	xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
 	if (data) {
 	    xhr.send(data);
 	} else {
@@ -380,8 +406,9 @@ CSPPollingTransport.prototype.open = function () {
     var xhr = createXHR();
     xhr.onreadystatechange = function () {
 	if (this.readyState == 4) {
-	    self._session._session_id = self.parseHandshake(this.responseText);
-	    self._onopen();
+	    var environ = JSON.parse(this.responseText);
+	    self._session._session_id = environ['session'];
+	    self._onopen(environ);
 	};
     };
     xhr.open('GET', url);
@@ -433,8 +460,9 @@ CSPXHRStreamingTransport.prototype.open = function () {
 			  );
     var onReadyStateChange = function () {
 	if (this.readyState == 4) {
-	    self._session._session_id = self.parseHandshake(this.responseText);
-	    self._onopen();
+	    var environ = JSON.parse(this.responseText);
+	    self._session._session_id = environ['session'];
+	    self._onopen(environ);
 	};
     };
     try {
@@ -539,14 +567,15 @@ CSPJSONPTransport.prototype.open = function () {
 	this._debug(url);
 	var script_tag_id = '__xxx__trickly_jsonp_open_tag__';
 	window.trickly_cb = function (message) {
-	    self._session._session_id = self.parseHandshake(message);
+	    var environ = JSON.parse(message);
+	    self._session._session_id = environ['session'];
 	    var tag = document.getElementById(script_tag_id);
 	    document.body.removeChild(tag);
 	    try {
 		delete window.trickly_cb;
 	    } catch (e) {
 	    };
-	    self._onopen();
+	    self._onopen(environ);
 	};
 	var tag = document.createElement('script');
 	tag.id = script_tag_id;

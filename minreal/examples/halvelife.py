@@ -16,7 +16,7 @@ from minreal.csp import CSPApp
 
 DEFAULT_AVATAR = 'default_avatar.png'
 DEFAULT_CENTER = (0, 0)
-DEFAULT_SPEED = 10
+DEFAULT_SPEED = 1
 
 
 def make_packet(type, payload):
@@ -26,22 +26,23 @@ def make_packet(type, payload):
 class HalveLifeCharacter(object):
 
     @classmethod
-    def create(cls, name):
+    def create(cls, name, address):
         id_ = str(uuid.uuid4())
-        return cls(id_, name)
+        return cls(id_, name, address)
 
     @classmethod
-    def load(cls, id_, name, client, **specs):
-        char = cls(id_, name)
+    def load(cls, id_, name, client, address, **specs):
+        char = cls(id_, name, address)
         char.avatar = specs.get('avatar', DEFAULT_AVATAR)
         char.center = tuple(specs.get('center', DEFAULT_CENTER))
         char.destination = specs.get('destination')
         char.speed = specs.get('speed', DEFAULT_SPEED)
         return char
 
-    def __init__(self, id_, name):
+    def __init__(self, id_, name, address):
         self.id = id_
         self.name = name
+        self.address = address
         self.avatar = DEFAULT_AVATAR
         self.center = (0, 0)
         self.destination = None
@@ -53,7 +54,8 @@ class HalveLifeCharacter(object):
                 setattr(self, attr, update[attr])
 
     def serialize(self):
-        attrs = ['id', 'name', 'avatar', 'center', 'destination', 'speed']
+        attrs = ['id', 'name', 'address',
+                 'avatar', 'center', 'destination', 'speed']
         return dict((attr, getattr(self, attr)) for attr in attrs)
 
 
@@ -85,19 +87,18 @@ class HalveLifeController(object):
     def _send_packet(self, type_, payload):
         self._packet_buffer.append(make_packet(type_, payload))
 
-    def join(self, type_, name, destination, client):
+    def join(self, type_, name, address, destination, client):
         self._clients.append(client)
-        char = HalveLifeCharacter.create(name)
+        char = HalveLifeCharacter.create(name, address)
         char.destination = tuple(destination)
         self._characters[char.id] = char
         char_attrs = char.serialize()
-        print char_attrs
         self._send_packet('joined', char_attrs)
 
     def move(self, type_, id, center):
         char = self._characters[id]
         char.center = tuple(center)
-        spec = {'id': char.id, 'center': char.center}
+        spec = {'id': char.id, 'address': char.address, 'center': char.center}
         self._send_packet('move', spec)
 
     def broadcast(self, type_, id, message):
@@ -148,7 +149,6 @@ class HalveLifeClient(MinrealClient):
             data.
         """
         packet = msgpack.unpackb(encoded_batch)
-        print "***" + repr(packet) + "***"
         type_ = packet['type']
         handler = getattr(self.controller, type_, self._unknown_handler)
         if type_ == 'join':
