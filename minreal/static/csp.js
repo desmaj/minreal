@@ -178,7 +178,7 @@ var CSPSession = function (host, port, path, transport, debug) {
     this.onread = function (message) { this._debug("session read: " + message) }.bind(this);
     this.onclose = function () { this._debug("session closed") }.bind(this);
     this.onerror = function (e) {
-	this._debug("transport error detected for transport " + this._transport.name);
+	this._debug("transport error '" + e + "' detected for transport " + this._transport.name);
 	var open = !this._transport.opened;
 	this._transport = this.getTransport(this, this._host, this._port, this._path, this._debug)
 	this._debug('trying transport: ' + this._transport.name);
@@ -292,7 +292,10 @@ var CSPTransport = function (session, host, port, path, debug) {
 	this.opened = false;
     };
     this._onerror = function (e) {
-	(this.onerror || function () { debug("transport error: " + e.toString()) })();
+	if (this.onerror) {
+	    this.onerror(e);
+	}
+	// console.log("transport error: " + e.toString());
 	this._session.onerror(e);
     };
 };

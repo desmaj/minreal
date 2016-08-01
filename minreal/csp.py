@@ -197,6 +197,7 @@ class CSPSession(object):
                 while self._packet_queue.get(timeout=timeout-waited):
                     batch, last_packet = self._batch_packets(last_packet)
                     if batch:
+                        sent = True
                         yield batch
                     waited += time.time() - start
             except queue.Empty:
@@ -226,8 +227,8 @@ class CSPApp(object):
         request_vars = CSPSession.parse_request_vars(request)
         session_vars = CSPSession.parse_session_vars(request)
         client_environ = {
-            'CLIENT_ADDR': environ['REMOTE_ADDR'],
-            'CLIENT_PORT': environ['REMOTE_PORT'],
+            'CLIENT_ADDR': environ.get('REMOTE_ADDR'),
+            'CLIENT_PORT': environ.get('REMOTE_PORT'),
         }
         session = CSPSession.create(request_vars,
                                     session_vars,
