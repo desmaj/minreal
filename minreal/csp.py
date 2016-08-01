@@ -229,6 +229,7 @@ class CSPApp(object):
         client_environ = {
             'CLIENT_ADDR': environ.get('REMOTE_ADDR'),
             'CLIENT_PORT': environ.get('REMOTE_PORT'),
+            'REMOTE_USER': environ.get('REMOTE_USER'),
         }
         session = CSPSession.create(request_vars,
                                     session_vars,

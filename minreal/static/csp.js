@@ -154,11 +154,14 @@ var Base64 = {
  
 };
 
-var CSPSession = function (host, port, path, transport, debug) {
+var CSPSession = function (protocol, host, port, path, transport, debug) {
+    this._protocol = protocol;
     this._host = host;
     this._port = port;
     this._path = path;
     this._debug = debugFactory(debug);
+
+    this._userid = null;
     
     this._packets_to_send = new Array();
     this._last_packet_id = -1;
@@ -174,13 +177,15 @@ var CSPSession = function (host, port, path, transport, debug) {
     }.bind(this);
     this._onopen = function (environ) {
 	this.onopen(environ);
+	this._userid = environ['REMOTE_USER'];
     }.bind(this);
     this.onread = function (message) { this._debug("session read: " + message) }.bind(this);
     this.onclose = function () { this._debug("session closed") }.bind(this);
     this.onerror = function (e) {
+	throw(e);
 	this._debug("transport error '" + e + "' detected for transport " + this._transport.name);
 	var open = !this._transport.opened;
-	this._transport = this.getTransport(this, this._host, this._port, this._path, this._debug)
+	this._transport = this.getTransport(this, this._protocol, this._host, this._port, this._path, this._debug)
 	this._debug('trying transport: ' + this._transport.name);
 	if (open) {
 	    this._transport.open();
@@ -191,7 +196,7 @@ var CSPSession = function (host, port, path, transport, debug) {
     }.bind(this);
 };
 
-CSPSession.prototype.getTransport = function (session, host, port, path, debug) {
+CSPSession.prototype.getTransport = function (session, protocol, host, port, path, debug) {
     var transports = {
 	polling: CSPPollingTransport,
 	xhrstreaming: CSPXHRStreamingTransport,
@@ -213,13 +218,13 @@ CSPSession.prototype.getTransport = function (session, host, port, path, debug) 
     } else {
 	preference = this._transport_choices[0]
     };
-    var transport = new transports[preference](session, host, port, path, debug);
+    var transport = new transports[preference](session, protocol, host, port, path, debug);
     transport.onopen = this._on_transport_open.bind(this);
     return transport;
 };
 
 CSPSession.prototype.open = function () {
-    this._transport = this.getTransport(this, this._host, this._port, this._path, this._debug);
+    this._transport = this.getTransport(this, this._protocol, this._host, this._port, this._path, this._debug);
     try {
 	this._transport.open();
     } catch (e) {
@@ -264,10 +269,11 @@ CSPSession.prototype._receive = function (message) {
     };
 };
 
-var CSPTransport = function (session, host, port, path, debug) {
+var CSPTransport = function (session, protocol, host, port, path, debug) {
     var self = this;
     
     this._session = session;
+    this._protocol = protocol;
     this._host = host;
     this._port = port;
     this._path = path;
@@ -296,12 +302,13 @@ var CSPTransport = function (session, host, port, path, debug) {
 	    this.onerror(e);
 	}
 	console.log("transport error: " + e.toString());
+	throw(e);
 	this._session.onerror(e);
     };
 };
 
 CSPTransport.prototype.makeUrl = function (path, args) {
-    var url = 'http://' + this._host + ':' + this._port + '/' + this._path;
+    var url = this._protocol + '//' + this._host + ':' + this._port + '/' + this._path;
     if (path) {
 	url += '/' + path;
     };
@@ -353,6 +360,7 @@ CSPTransport.prototype.send = function (data, success_callback) {
 	xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
 	xhr.send(body);
     } catch (e) {
+	console.log(e);
 	self._onerror(e);
     };
 };
@@ -383,7 +391,8 @@ CSPTransport.prototype.doXHR = function (url, callback, data) {
 	    xhr.send();
 	};
     } catch (e) {
-	self._onerror(e);
+	throw(e);
+	this._onerror(e);
     };
 };
 
@@ -391,8 +400,8 @@ CSPTransport.prototype.parseHandshake = function (handshake) {
     return JSON.parse(handshake)['session'];
 };
 
-var CSPPollingTransport = function (session, host, port, path, debug) {
-    CSPTransport.call(this, session, host, port, path, debug);
+var CSPPollingTransport = function (session, protocol, host, port, path, debug) {
+    CSPTransport.call(this, session, protocol, host, port, path, debug);
     this._closing = false;
     this.name = "polling";
 };
@@ -411,7 +420,7 @@ CSPPollingTransport.prototype.open = function () {
 	if (this.readyState == 4) {
 	    var environ = JSON.parse(this.responseText);
 	    self._session._session_id = environ['session'];
-	    self._onopen(environ);
+	    self._onopen(environ['environ']);
 	};
     };
     xhr.open('GET', url);
@@ -438,7 +447,7 @@ CSPPollingTransport.prototype.doComet = function () {
 	    };
 	});
     } catch (e) {
-	self._onerror(e);
+	this._onerror(e);
     };
 };
 
@@ -448,8 +457,8 @@ CSPPollingTransport.prototype.doSend = function () {
 CSPPollingTransport.prototype.doClose = function () {
 };
 
-var CSPXHRStreamingTransport = function (session, host, port, path, debug) {
-    CSPTransport.call(this, session, host, port, path, debug);
+var CSPXHRStreamingTransport = function (session, protocol, host, port, path, debug) {
+    CSPTransport.call(this, session, protocol, host, port, path, debug);
     this.closeable = true;
     this.name = "xhrstreaming";
 };
@@ -465,7 +474,7 @@ CSPXHRStreamingTransport.prototype.open = function () {
 	if (this.readyState == 4) {
 	    var environ = JSON.parse(this.responseText);
 	    self._session._session_id = environ['session'];
-	    self._onopen(environ);
+	    self._onopen(environ['environ']);
 	};
     };
     try {
@@ -558,8 +567,8 @@ CSPXHRStreamingTransport.prototype.close = function () {
     this.closer();
 };
 
-var CSPJSONPTransport = function (session, host, port, path, debug) {
-    CSPTransport.call(this, session, host, port, path, debug);
+var CSPJSONPTransport = function (session, protocol, host, port, path, debug) {
+    CSPTransport.call(this, session, protocol, host, port, path, debug);
     this.name = "jsonp";
 };
 CSPJSONPTransport.prototype = new CSPTransport();
@@ -586,7 +595,7 @@ CSPJSONPTransport.prototype.open = function () {
 		delete window.trickly_cb;
 	    } catch (e) {
 	    };
-	    self._onopen(environ);
+	    self._onopen(environ['environ']);
 	};
 	var tag = document.createElement('script');
 	tag.id = script_tag_id;
@@ -599,6 +608,7 @@ CSPJSONPTransport.prototype.open = function () {
 };
 
 CSPJSONPTransport.prototype.send = function (data, success_callback) {
+    var self = this;
     var url = this.makeUrl('send', 
 			   {s: this._session._session_id,
 			    d: data,
