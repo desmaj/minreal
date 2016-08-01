@@ -295,7 +295,7 @@ var CSPTransport = function (session, host, port, path, debug) {
 	if (this.onerror) {
 	    this.onerror(e);
 	}
-	// console.log("transport error: " + e.toString());
+	console.log("transport error: " + e.toString());
 	this._session.onerror(e);
     };
 };
@@ -488,7 +488,7 @@ CSPXHRStreamingTransport.prototype.doComet = function () {
     try {
 	this._debug(url);
 	this.xhr = createXHR();
-	var data_received = "";
+	var data_processed = "";
 	this.xhr.onreadystatechange = function () {
 	    self._debug('XHR callback:(' + this.responseText + ')');
 	    try {
@@ -501,20 +501,28 @@ CSPXHRStreamingTransport.prototype.doComet = function () {
 		};
 		
 		if (this.readyState == 3) {
-		    if (this.responseText.length == data_received.length) {
+		    if (this.responseText.length == data_processed.length) {
 			return
 		    };
-		    var message = this.responseText.slice(data_received.length);
-		    data_received = this.responseText;
-		    self._onread(message);
+		    var message = this.responseText.slice(data_processed.length);
+		    while (message.includes("]]")) {
+			var batch = message.slice(0, message.indexOf("]]")+2);
+			self._onread(batch);
+			data_processed += batch;
+			message = message.slice(batch.length);
+		    }
 		    self.closeable = true;
 		} else if (this.readyState == 4) {
 		    if (!this.responseText.length) return;
 		    
-		    if (this.responseText.length != data_received.length) {
-			var message = this.responseText.slice(data_received.length);
-			data_received = this.responseText;
-			self._onread(message);
+		    if (this.responseText.length != data_processed.length) {
+			var message = this.responseText.slice(data_processed.length);
+			while (message.includes("]]")) {
+			    var batch = message.slice(0, message.indexOf("]]")+2);
+			    self._onread(batch);
+			    data_processed += batch;
+			    message = message.slice(batch.length);
+			}
 		    };
 		    self.closeable = true;
 		    if (!self._closing) {
