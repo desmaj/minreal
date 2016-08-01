@@ -192,6 +192,7 @@ class CSPSession(object):
             waited = 0.0
             timeout = session_vars['du']
             last_packet = None
+            sent = False
             try:
                 while self._packet_queue.get(timeout=timeout-waited):
                     batch, last_packet = self._batch_packets(last_packet)
@@ -199,7 +200,8 @@ class CSPSession(object):
                         yield batch
                     waited += time.time() - start
             except queue.Empty:
-                pass
+                if not sent:
+                    yield []
 
 
 class CSPApp(object):

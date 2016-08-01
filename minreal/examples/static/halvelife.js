@@ -196,7 +196,6 @@ var HalveLifeApp = React.createClass({
 			       character.destination[1]);
 		}
 		var move = [Math.floor(newX), Math.floor(newY)];
-		console.log(move);
 		var packet = {type: "move",
 			      payload: {id: character.id,
 					center: move}};
