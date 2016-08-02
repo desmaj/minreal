@@ -60,7 +60,7 @@ class CSPResponseFactory(object):
         }
         return headers, self.SEND_RESPONSE_FORMAT.format(**response_vars)
 
-    def render_comet_response(self, session_vars, packets):
+    def render_comet_response(self, session_vars, batch_queue):
         headers = {'Content-type': session_vars['ct'].encode('utf8')}
         yield headers
 
@@ -68,7 +68,11 @@ class CSPResponseFactory(object):
         preamble = session_vars['p']
         yield prebuffer + preamble
 
-        for batch in packets:
+        while True:
+            batch = batch_queue.get()
+            if batch is None:
+                break
+
             response_vars = {
                 'data': json.dumps(batch),
                 'prebuffer': ' ' * session_vars['ps'],
@@ -78,12 +82,17 @@ class CSPResponseFactory(object):
             }
             yield self.COMET_RESPONSE_FORMAT.format(**response_vars)
 
-    def render_sse_response(self, packets):
-        headers = {'Content-type': 'text/event-stream'}
+    def render_sse_response(self, batch_queue):
+        headers = {'Content-type': u'text/event-stream'.encode('utf8')}
         yield headers
 
-        for batch in packets:
-            yield batch
+        event_id = 0
+        while True:
+            batch = batch_queue.get()
+            event_id += 1
+            batch_json = json.dumps(batch)
+            event = "id: {}\ndata: {}\n\n".format(event_id, batch_json)
+            yield event
 
 
 class CSPSession(object):
@@ -149,8 +158,8 @@ class CSPSession(object):
         self._packet_buffer.append(
             [self._next_packet_id, 1, base64.b64encode(chunk)]
         )
+        self._packet_queue.put(self._next_packet_id)
         self._next_packet_id += 1
-        self._packet_queue.put(True)
 
     def _ack_packets(self, ack_id):
         buffer_copy = copy.copy(self._packet_buffer)
@@ -167,10 +176,8 @@ class CSPSession(object):
             batch = [packet for packet in self._packet_buffer]
 
         if batch:
-            last_packet_id = batch[-1][PACKET_ID]
-        else:
-            last_packet_id = None
-        return batch, last_packet_id
+            after = batch[-1][PACKET_ID]
+        return batch, after
 
     def send(self, request_vars, session_vars):
         self._ack_packets(request_vars['a'])
@@ -181,19 +188,19 @@ class CSPSession(object):
             self._client.handle_data(data)
         return "OK"
 
-    def comet(self, request_vars, session_vars):
+    def comet(self, request_vars, session_vars, batch_queue):
         self._ack_packets(request_vars['a'])
         if not session_vars['is']:
             if self._packet_buffer:
                 batch, _ = self._batch_packets()
-                yield batch
+                batch_queue.put(batch)
             else:
                 try:
                     self._packet_queue.get(timeout=session_vars['du'])
                 except queue.Empty:
                     pass
                 batch, _ = self._batch_packets()
-                yield batch
+                batch_queue.put(batch)
         else:
             start = time.time()
             waited = 0.0
@@ -205,20 +212,20 @@ class CSPSession(object):
                     batch, last_packet = self._batch_packets(last_packet)
                     if batch:
                         sent = True
-                        yield batch
+                        batch_queue.put(batch)
                     waited += time.time() - start
             except queue.Empty:
                 if not sent:
-                    yield []
+                    batch_queue.put([])
+        batch_queue.put(None)
 
-    def sse(self, request_vars):
+    def sse(self, request_vars, batch_queue):
         self._ack_packets(request_vars['a'])
         last_packet = None
         while self._packet_queue.get():
             batch, last_packet = self._batch_packets(last_packet)
             if batch:
-                event = "data: {}\n\n".format(json.dumps(batch))
-                yield event
+                batch_queue.put(batch)
 
 
 class CSPApp(object):
@@ -281,10 +288,14 @@ class CSPApp(object):
         session_vars = CSPSession.parse_session_vars(request)
         session = self._sessions.get(request_vars['s'])
         if session:
-            packets = session.comet(request_vars, session_vars)
+            batch_queue = queue.Queue()
+            eventlet.spawn(session.comet,
+                           request_vars,
+                           session_vars,
+                           batch_queue)
 
             response = self._response_factory.render_comet_response(
-                session.session_vars, packets
+                session.session_vars, batch_queue
             )
             headers = response.next()
             response = webob.Response(headers=headers, app_iter=response)
@@ -297,9 +308,10 @@ class CSPApp(object):
         request_vars = CSPSession.parse_request_vars(request)
         session = self._sessions.get(request_vars['s'])
         if session:
-            packets = session.sse(request_vars)
+            batch_queue = queue.Queue()
+            eventlet.spawn(session.sse, request_vars, batch_queue)
 
-            response = self._response_factory.render_sse_response(packets)
+            response = self._response_factory.render_sse_response(batch_queue)
             headers = response.next()
             response = webob.Response(headers=headers, app_iter=response)
         else:
