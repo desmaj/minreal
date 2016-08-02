@@ -78,6 +78,13 @@ class CSPResponseFactory(object):
             }
             yield self.COMET_RESPONSE_FORMAT.format(**response_vars)
 
+    def render_sse_response(self, packets):
+        headers = {'Content-type': 'text/event-stream'}
+        yield headers
+
+        for batch in packets:
+            yield batch
+
 
 class CSPSession(object):
 
@@ -204,6 +211,15 @@ class CSPSession(object):
                 if not sent:
                     yield []
 
+    def sse(self, request_vars):
+        self._ack_packets(request_vars['a'])
+        last_packet = None
+        while self._packet_queue.get():
+            batch, last_packet = self._batch_packets(last_packet)
+            if batch:
+                event = "data: {}\n\n".format(json.dumps(batch))
+                yield event
+
 
 class CSPApp(object):
 
@@ -216,6 +232,7 @@ class CSPApp(object):
         self._wsgi_app['/handshake'] = self.handshake
         self._wsgi_app['/send'] = self.send
         self._wsgi_app['/comet'] = self.comet
+        self._wsgi_app['/sse'] = self.sse
         static_path = os.path.join(os.path.dirname(__file__), 'static')
         self._wsgi_app['/static'] = fileapp.DirectoryApp(static_path)
 
@@ -269,6 +286,20 @@ class CSPApp(object):
             response = self._response_factory.render_comet_response(
                 session.session_vars, packets
             )
+            headers = response.next()
+            response = webob.Response(headers=headers, app_iter=response)
+        else:
+            response = HTTPBadRequest()
+        return response(environ, start_response)
+
+    def sse(self, environ, start_response):
+        request = webob.Request(environ).params
+        request_vars = CSPSession.parse_request_vars(request)
+        session = self._sessions.get(request_vars['s'])
+        if session:
+            packets = session.sse(request_vars)
+
+            response = self._response_factory.render_sse_response(packets)
             headers = response.next()
             response = webob.Response(headers=headers, app_iter=response)
         else:

@@ -198,9 +198,10 @@ var CSPSession = function (protocol, host, port, path, transport, debug) {
 
 CSPSession.prototype.getTransport = function (session, protocol, host, port, path, debug) {
     var transports = {
-	polling: CSPPollingTransport,
+	sse: CSPSSETransport,
 	xhrstreaming: CSPXHRStreamingTransport,
-	jsonp: CSPJSONPTransport
+	jsonp: CSPJSONPTransport,
+	polling: CSPPollingTransport
     };
     var preference = null;
     if (this._transport) {
@@ -374,8 +375,7 @@ CSPTransport.prototype._close = function () {
 };
 
 CSPTransport.prototype.start = function () {
-    var self = this;
-    self.doComet();
+    this.doComet();
 };
 
 CSPTransport.prototype.doXHR = function (url, callback, data) {
@@ -670,3 +670,48 @@ CSPJSONPTransport.prototype.doComet = function () {
 	self._onerror(e);
     };
 };
+
+var CSPSSETransport = function (session, protocol, host, port, path, debug) {
+    CSPTransport.call(this, session, protocol, host, port, path, debug);
+    this.closeable = true;
+    this.name = "sse";
+};
+CSPSSETransport.prototype = new CSPTransport();
+
+CSPSSETransport.prototype.open = function () {
+    var self = this;
+    var url = this.makeUrl('handshake', 
+			   {d: '{}',
+			    ct: 'application/octet-stream'}
+			  );
+    var onReadyStateChange = function () {
+	if (this.readyState == 4) {
+	    var environ = JSON.parse(this.responseText);
+	    self._session._session_id = environ['session'];
+	    self._onopen(environ['environ']);
+	};
+    };
+    try {
+	this.doXHR(url, onReadyStateChange);
+    } catch (e) {
+	self._onerror(e);
+    };
+};
+
+CSPSSETransport.prototype.doComet = function () {
+    this._debug('making sse request');
+    var self = this;
+    var url = this.makeUrl('sse',
+			   {s: this._session._session_id});
+    var eventSource = new EventSource(url);
+    eventSource.onopen = function () {
+	this._debug("SSE open");
+    }.bind(this);
+    eventSource.onmessage = function (event) {
+	var message = event.data;
+	self._onread(message);
+    }.bind(this);
+    eventSource.onerror = function (err) {
+	console.log(err);
+    }.bind(this);
+}
