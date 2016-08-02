@@ -1,7 +1,10 @@
-var EchoStore = function (host, port, path, app) {
+var EchoStore = function (protocol, host, port, path, app) {
     this._messages = [];
     this._app = app;
-    this._csp = new CSPSession('localhost', 5001, 'echo/csp');
+    this._csp = new CSPSession(protocol,
+			       'localhost',
+			       5001,
+			       'echo/csp');
     this._csp.open();
     this._csp.onread = this.onMessage.bind(this);
 };
@@ -44,7 +47,10 @@ var EchoConsole = React.createClass({
 
 var EchoApp = React.createClass({
     componentWillMount: function () {
-	this.store = new EchoStore('csp', this);
+	this.store = new EchoStore(window.location.protocol,
+				   window.location.host,
+				   window.location.port,
+				   'echo/csp', this);
     },
 
     getInitialState: function () {

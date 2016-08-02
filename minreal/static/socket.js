@@ -5,10 +5,10 @@ var STATE = {
     'CLOSING': 3,
     'CLOSED': 3,
 };
-window.TCPSocket = function (host, port, path) {
+window.TCPSocket = function (protocol, host, port, path) {
     this._host = null;
     this._port = null;
-    this._csp = new CSPSession(host, port, path, 'jsonp', true);
+    this._csp = new CSPSession(protocol, host, port, path, 'jsonp', true);
     this._csp.onread = this.onMessage.bind(this);
     this._csp.onopen = this.onOpen.bind(this);
     this._csp.onclose = this.onClose.bind(this);

@@ -15,9 +15,9 @@ var min = function (a, b) {
     }
 }
 
-var HalveLifeStore = function (host, port, path, app) {
+var HalveLifeStore = function (protocol, host, port, path, app) {
     this._app = app;
-    this._csp = new CSPSession(host, port, path, 'xhrstreaming', false);
+    this._csp = new CSPSession(protocol, host, port, path, 'xhrstreaming', false);
     this._csp.open();
     this._csp.onopen = this.onOpen.bind(this);
     this._csp.onread = this.onMessage.bind(this);
@@ -25,8 +25,8 @@ var HalveLifeStore = function (host, port, path, app) {
     this._port = null;
 };
 HalveLifeStore.prototype.onOpen = function (environ) {
-    this._address = environ['environ']['CLIENT_ADDR'];
-    this._port = environ['environ']['CLIENT_PORT'];
+    this._address = environ['CLIENT_ADDR'];
+    this._port = environ['CLIENT_PORT'];
 }
 HalveLifeStore.prototype._encode = function (message) {
     var message = msgpack.encode(message);
@@ -152,7 +152,11 @@ var HalveLifeBoard = React.createClass({
 
 var HalveLifeApp = React.createClass({
     componentWillMount: function () {
-	this.store = new HalveLifeStore('localhost', '5001', 'hl/csp', this);
+	this.store = new HalveLifeStore(window.location.protocol,
+					'localhost',
+					'5001',
+					'hl/csp',
+					this);
 	requestAnimationFrame(this.tick);
     },
 

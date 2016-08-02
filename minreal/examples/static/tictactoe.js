@@ -1,6 +1,6 @@
-var TicTacToeStore = function (host, port, path, app) {
+var TicTacToeStore = function (protocol, host, port, path, app) {
     this._app = app;
-    this._csp = new CSPSession(host, port, path);
+    this._csp = new CSPSession(protocol, host, port, path);
     this._csp.open();
     this._csp.onread = this.onMessage.bind(this);
 };
@@ -103,7 +103,11 @@ var TicTacToeBoard = React.createClass({
 
 var TicTacToeApp = React.createClass({
     componentWillMount: function () {
-	this.store = new TicTacToeStore('localhost', '5001', 'ttt/csp', this);
+	this.store = new TicTacToeStore(window.location.protocol,
+					'localhost',
+					'5001',
+					'ttt/csp',
+					this);
     },
 
     getInitialState: function () {

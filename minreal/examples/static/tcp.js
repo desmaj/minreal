@@ -1,7 +1,7 @@
-var TCPStore = function (host, port, path, app) {
+var TCPStore = function (protocol, host, port, path, app) {
     this._messages = [];
     this._app = app;
-    this._sock = new TCPSocket(host, port, path);
+    this._sock = new TCPSocket(protocol, host, port, path);
     this._sock.connect('chat.freenode.net', '6667');
     this._sock.recv = this.onMessage.bind(this);
 };
@@ -73,7 +73,11 @@ var TCPConsole = React.createClass({
 
 var TCPApp = React.createClass({
     componentWillMount: function () {
-	this.store = new TCPStore('localhost', '5001', 'tcp/csp', this);
+	this.store = new TCPStore(window.location.protocol,
+				  'localhost',
+				  '5001',
+				  'tcp/csp',
+				  this);
     },
 
     getInitialState: function () {
