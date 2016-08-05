@@ -198,6 +198,7 @@ var CSPSession = function (protocol, host, port, path, transport, debug) {
 
 CSPSession.prototype.getTransport = function (session, protocol, host, port, path, debug) {
     var transports = {
+	ws: CSPWSTransport,
 	sse: CSPSSETransport,
 	xhrstreaming: CSPXHRStreamingTransport,
 	jsonp: CSPJSONPTransport,
@@ -308,8 +309,9 @@ var CSPTransport = function (session, protocol, host, port, path, debug) {
     };
 };
 
-CSPTransport.prototype.makeUrl = function (path, args) {
-    var url = this._protocol + '//' + this._host + ':' + this._port + '/' + this._path;
+CSPTransport.prototype.makeUrl = function (path, args, protocol) {
+    var protocol = protocol || this._protocol
+    var url = protocol + '//' + this._host + ':' + this._port + '/' + this._path;
     if (path) {
 	url += '/' + path;
     };
@@ -713,5 +715,66 @@ CSPSSETransport.prototype.doComet = function () {
     }.bind(this);
     eventSource.onerror = function (err) {
 	console.log(err);
+    }.bind(this);
+}
+
+var CSPWSTransport = function (session, protocol, host, port, path, debug) {
+    CSPTransport.call(this, session, protocol, host, port, path, debug);
+    this.closeable = true;
+    this.name = "ws";
+    this._websocket = null;
+};
+CSPWSTransport.prototype = new CSPTransport();
+
+CSPWSTransport.prototype.open = function () {
+    var self = this;
+    var url = this.makeUrl('handshake', 
+			   {d: '{}',
+			    ct: 'application/octet-stream'}
+			  );
+    var onReadyStateChange = function () {
+	if (this.readyState == 4) {
+	    var environ = JSON.parse(this.responseText);
+	    self._session._session_id = environ['session'];
+	    self._onopen(environ['environ']);
+	    var url = self.makeUrl('ws',
+				   {s: self._session._session_id},
+				   'ws:');
+	    self._websocket = new WebSocket(url);
+	    self._websocket.onopen = function () {
+		self._debug("WS open");
+	    }.bind(self);
+	    self._websocket.onerror = function (err) {
+		console.log(err);
+	    }.bind(self);
+	    self.doComet();
+	};
+    };
+    try {
+	this.doXHR(url, onReadyStateChange);
+    } catch (e) {
+	self._onerror(e);
+    };
+};
+
+CSPWSTransport.prototype.start = function () {}
+
+CSPWSTransport.prototype.send = function (data, success_callback) {
+    console.log(data);
+    var payload = JSON.stringify({d: data,
+				  a: this._session._last_packet_id});
+    console.log(payload);
+    this._websocket.send(payload);
+    success_callback("OK");
+}
+
+CSPWSTransport.prototype.doComet = function () {
+    this._websocket.onmessage = function (event) {
+	var reader = new FileReader();
+	reader.addEventListener('loadend', function () {
+	    console.log(reader.result);
+	    this._onread(reader.result);
+	}.bind(this));
+	reader.readAsText(event.data);
     }.bind(this);
 }

@@ -17,7 +17,7 @@ var min = function (a, b) {
 
 var HalveLifeStore = function (protocol, host, port, path, app) {
     this._app = app;
-    this._csp = new CSPSession(protocol, host, port, path, 'sse', false);
+    this._csp = new CSPSession(protocol, host, port, path, 'ws', false);
     this._csp.open();
     this._csp.onopen = this.onOpen.bind(this);
     this._csp.onread = this.onMessage.bind(this);

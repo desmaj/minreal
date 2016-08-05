@@ -7,6 +7,7 @@ import uuid
 
 import eventlet
 from eventlet import queue
+from eventlet import websocket
 
 from paste import fileapp
 from paste import urlmap
@@ -227,6 +228,25 @@ class CSPSession(object):
             if batch:
                 batch_queue.put(batch)
 
+    def ws(self, request_vars, batch_queue, ws):
+        self._ack_packets(request_vars['a'])
+
+        def _listen(ws):
+            while True:
+                payload = ws.wait()
+                if not payload:
+                    break
+                message = json.loads(payload)
+                message['d'] = json.loads(message['d'])
+                self.send(message, None)
+        eventlet.spawn(_listen, ws)
+
+        last_packet = None
+        while self._packet_queue.get():
+            batch, last_packet = self._batch_packets(last_packet)
+            if batch:
+                batch_queue.put(batch)
+
 
 class CSPApp(object):
 
@@ -240,6 +260,8 @@ class CSPApp(object):
         self._wsgi_app['/send'] = self.send
         self._wsgi_app['/comet'] = self.comet
         self._wsgi_app['/sse'] = self.sse
+        self._wsgi_app['/ws'] = self.ws
+
         static_path = os.path.join(os.path.dirname(__file__), 'static')
         self._wsgi_app['/static'] = fileapp.DirectoryApp(static_path)
 
@@ -317,3 +339,21 @@ class CSPApp(object):
         else:
             response = HTTPBadRequest()
         return response(environ, start_response)
+
+    def ws(self, environ, start_response):
+        request = webob.Request(environ).params
+        request_vars = CSPSession.parse_request_vars(request)
+        session = self._sessions.get(request_vars['s'])
+        if session:
+            @websocket.WebSocketWSGI
+            def _ws_handler(ws):
+                batch_queue = queue.Queue()
+                eventlet.spawn(session.ws, request_vars, batch_queue, ws)
+                while True:
+                    batch = batch_queue.get()
+                    batch_json = json.dumps(batch)
+                    ws.send(batch_json)
+            return _ws_handler(environ, start_response)
+        else:
+            response = HTTPBadRequest()
+            return response(environ, start_response)

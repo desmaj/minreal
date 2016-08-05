@@ -4,7 +4,8 @@ var EchoStore = function (protocol, host, port, path, app) {
     this._csp = new CSPSession(protocol,
 			       'localhost',
 			       5001,
-			       'echo/csp');
+			       'echo/csp',
+			       'ws');
     this._csp.open();
     this._csp.onread = this.onMessage.bind(this);
 };
