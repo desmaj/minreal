@@ -166,12 +166,14 @@ var CSPSession = function (protocol, host, port, path, transport, debug) {
     this._packets_to_send = new Array();
     this._last_packet_id = -1;
     this._current_packet_id = 1;
+    
     this._transport = null;
     if (transport) {
 	this._transport_choices = [transport];
     } else {
-	this._transport_choices = ['xhrstreaming', 'jsonp', 'polling'];
+	this._transport_choices = ['ws', 'sse', 'xhrstreaming', 'jsonp', 'polling'];
     };
+    
     this.onopen = function (environ) {
 	this._debug("session opened")
     }.bind(this);
@@ -179,18 +181,33 @@ var CSPSession = function (protocol, host, port, path, transport, debug) {
 	this.onopen(environ);
 	this._userid = environ['REMOTE_USER'];
     }.bind(this);
-    this.onread = function (message) { this._debug("session read: " + message) }.bind(this);
-    this.onclose = function () { this._debug("session closed") }.bind(this);
+    
+    this.onread = function (message) {
+	this._debug("session read: " + message)
+    }.bind(this);
+    
+    this.onclose = function () {
+	this._debug("session closed")
+    }.bind(this);
+    
     this.onerror = function (e) {
-	throw(e);
-	this._debug("transport error '" + e + "' detected for transport " + this._transport.name);
-	var open = !this._transport.opened;
-	this._transport = this.getTransport(this, this._protocol, this._host, this._port, this._path, this._debug)
+	this._debug("transport error '",
+		    e,
+		    "' detected for transport ",
+		    this._transport.name);
+	
+	var shouldTryOpening = !this._transport.isOpen();
+	this._transport = this.getTransport(this,
+					    this._protocol,
+					    this._host,
+					    this._port,
+					    this._path,
+					    this._debug)
+	
 	this._debug('trying transport: ' + this._transport.name);
-	if (open) {
+	if (shouldTryOpening) {
 	    this._transport.open();
 	} else {
-	    this._transport.opened = true;
 	    this._transport.start();
 	};
     }.bind(this);
@@ -220,13 +237,23 @@ CSPSession.prototype.getTransport = function (session, protocol, host, port, pat
     } else {
 	preference = this._transport_choices[0]
     };
-    var transport = new transports[preference](session, protocol, host, port, path, debug);
+    var transport = new transports[preference](session,
+					       protocol,
+					       host,
+					       port,
+					       path,
+					       debug);
     transport.onopen = this._on_transport_open.bind(this);
     return transport;
 };
 
 CSPSession.prototype.open = function () {
-    this._transport = this.getTransport(this, this._protocol, this._host, this._port, this._path, this._debug);
+    this._transport = this.getTransport(this,
+					this._protocol,
+					this._host,
+					this._port,
+					this._path,
+					this._debug);
     try {
 	this._transport.open();
     } catch (e) {
@@ -252,11 +279,10 @@ CSPSession.prototype._makePacket = function (data) {
 CSPSession.prototype.write = function (data) {
     var packet = this._makePacket(data);
     this._packets_to_send.push(packet);
-    var self = this;
     var message = JSON.stringify(this._packets_to_send);
     this._transport.send(message, function () {
-	self._packets_to_send = new Array();
-    });
+	this._packets_to_send = new Array();
+    }.bind(this));
 };
 
 CSPSession.prototype._receive = function (message) {
@@ -279,7 +305,7 @@ var CSPTransport = function (session, protocol, host, port, path, debug) {
     this._host = host;
     this._port = port;
     this._path = path;
-    this.opened = false;
+    this._opened = false;
     this._debug = debug;
     
     this._onopen = function (environ) {
@@ -287,7 +313,7 @@ var CSPTransport = function (session, protocol, host, port, path, debug) {
 	    debug("transport " + self.name + " opened");
 	};
 	onopen(environ);
-	this.opened = true;
+	this._opened = true;
 	this.start();
     };
     this._onread = function (message) {
@@ -307,6 +333,10 @@ var CSPTransport = function (session, protocol, host, port, path, debug) {
 	throw(e);
 	this._session.onerror(e);
     };
+};
+
+CSPTransport.prototype.isOpen = function () {
+    return this._opened;
 };
 
 CSPTransport.prototype.makeUrl = function (path, args, protocol) {
@@ -736,18 +766,18 @@ CSPWSTransport.prototype.open = function () {
 	if (this.readyState == 4) {
 	    var environ = JSON.parse(this.responseText);
 	    self._session._session_id = environ['session'];
-	    self._onopen(environ['environ']);
 	    var url = self.makeUrl('ws',
 				   {s: self._session._session_id},
 				   'ws:');
 	    self._websocket = new WebSocket(url);
 	    self._websocket.onopen = function () {
+		self._onopen(environ['environ']);
 		self._debug("WS open");
+		self.doComet();
 	    }.bind(self);
 	    self._websocket.onerror = function (err) {
 		console.log(err);
 	    }.bind(self);
-	    self.doComet();
 	};
     };
     try {
