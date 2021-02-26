@@ -319,7 +319,7 @@ class CSPApp(object):
             response = self._response_factory.render_comet_response(
                 session.session_vars, batch_queue
             )
-            headers = response.next()
+            headers = next(response)
             response = webob.Response(headers=headers, app_iter=response)
         else:
             response = HTTPBadRequest()
@@ -334,7 +334,7 @@ class CSPApp(object):
             eventlet.spawn(session.sse, request_vars, batch_queue)
 
             response = self._response_factory.render_sse_response(batch_queue)
-            headers = response.next()
+            headers = next(response)
             response = webob.Response(headers=headers, app_iter=response)
         else:
             response = HTTPBadRequest()
